@@ -153,3 +153,25 @@ For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
 at specs/001-enterprise-agentic-rag/plan.md
 <!-- SPECKIT END -->
+
+## 8. 项目状态文档持续维护
+
+项目使用以下两份文档维护当前事实与后续规划：
+
+- `docs/PROJECT_STATUS.md`：只记录已有代码、测试或实际运行能够验证的实现状态。
+- `docs/NEXT_STEPS.md`：只记录未完成工作的优先级、原因和验收出口。
+
+出现以下任一变化时，必须在同一次代码变更中同步更新相关文档：
+
+- 模块能力、用户可见行为或完成状态发生变化；
+- 公共接口、数据结构、技术栈或部署方式发生变化；
+- 测试范围、最近验证结论或已知风险发生变化；
+- 下一阶段优先级、依赖或阻塞发生变化。
+
+维护要求：
+
+1. 状态文档不得根据计划、设计稿或未运行的测试宣称功能完成。
+2. 建议完成后，将可验证结果迁入状态文档，并删除或调整原建议。
+3. 新建议必须包含明确验收出口，不重复替代 `spec.md`、`plan.md` 或 `tasks.md`。
+4. 纯内部重构、格式调整或不影响上述内容的小修改，可不更新这两份文档。
+5. 更新文档时同步修改“最后更新”日期；必要时更新基线分支和提交。

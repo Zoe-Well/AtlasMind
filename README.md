@@ -177,3 +177,10 @@ pnpm screenshot:ui
 企业数据保留与脱敏政策、外部观测数据政策和生产身份集成完成前，不应把 local MVP 作为生产环境发布。
 
 详细规格、数据模型、API 契约和任务位于 [specs/001-enterprise-agentic-rag](specs/001-enterprise-agentic-rag)。实际运行和测试结果优先于任务勾选或设计文档中的完成描述。
+
+## 项目进度
+
+- [项目实现状态](docs/PROJECT_STATUS.md)：当前已经实现、验证和仍受限制的能力。
+- [下一步建议](docs/NEXT_STEPS.md)：按优先级排列的后续工作与验收出口。
+
+代码变更影响能力、接口、部署、测试结论或优先级时，应按照 `AGENTS.md` 同步维护这两份文档。
