@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AtlasMind 系统状态</title><link rel="stylesheet" href="prototype.css"></head>
+<body data-page="states"><template id="page-content"><div class="content content-narrow">
+  <div class="page-heading"><div><p class="eyebrow">System states</p><h2>关键状态与降级反馈</h2><p>所有失败都应明确说明限制，不隐藏错误，也不把未验证结果呈现为确定事实。</p></div></div>
+  <div class="grid-3">
+    <section class="card"><span class="card-icon"><i data-icon="search"></i></span><h3>证据不足</h3><p>在当前可访问知识中没有找到足够证据。建议调整问题或联系知识负责人。</p><div class="card-footer"><span class="badge">INSUFFICIENT</span><button class="button small">调整问题</button></div></section>
+    <section class="card"><span class="card-icon" style="background:var(--amber-soft);color:var(--amber)"><i data-icon="alert"></i></span><h3>来源冲突</h3><p>两个当前有效来源给出不同结论。系统并列展示来源，不代替业务确认。</p><div class="card-footer"><span class="badge amber">CONFLICTED</span><button class="button small">查看证据</button></div></section>
+    <section class="card"><span class="card-icon" style="background:var(--red-soft);color:var(--red)"><i data-icon="lock"></i></span><h3>无权限</h3><p>当前身份不能访问该知识或运行记录。错误信息不会透露受限内容是否存在。</p><div class="card-footer"><span class="badge red">AUTHZ_DENIED</span><button class="button small">返回问答</button></div></section>
+    <section class="card"><span class="card-icon" style="background:var(--amber-soft);color:var(--amber)"><i data-icon="flask"></i></span><h3>模型能力未配置</h3><p>平台仍可访问，但当前操作依赖的模型能力没有配置。已上传内容不会被错误激活。</p><div class="card-footer"><span class="badge amber">MODEL_CAPABILITY_NOT_CONFIGURED</span></div></section>
+    <section class="card"><span class="card-icon" style="background:var(--red-soft);color:var(--red)"><i data-icon="activity"></i></span><h3>实时状态中断</h3><p>SSE 连接已中断。运行仍在服务端继续，可通过运行详情读取最新状态。</p><div class="card-footer"><span class="badge red">STREAM_DISCONNECTED</span><button class="button small">打开运行</button></div></section>
+    <section class="card"><span class="card-icon" style="background:var(--red-soft);color:var(--red)"><i data-icon="file"></i></span><h3>导入失败</h3><p>向量索引失败，文档保持不可检索。管理员可查看阶段、原因并安全重试。</p><div class="card-footer"><span class="badge red">INGESTION_FAILED</span><a class="button small" href="06-ingestion-job-drawer.html">查看任务</a></div></section>
+  </div>
+</div></template><script src="prototype.js"></script></body></html>

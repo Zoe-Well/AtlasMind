@@ -1,0 +1,23 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AtlasMind 智能问答</title><link rel="stylesheet" href="prototype.css"></head>
+<body data-page="chat"><template id="page-content">
+  <div class="chat-layout">
+    <section class="chat-main">
+      <div class="message-time">今天 10:42</div>
+      <div class="user-message">请帮我总结一下 2026 年销售管理制度的主要变化，尤其是报价审批和合同审核部分。</div>
+      <article class="assistant"><div class="assistant-head"><span class="assistant-logo">A</span><span>AtlasMind</span><span class="badge green">已查阅 3 篇</span></div>
+        <div class="answer"><p>根据《2026 销售管理制度》及相关流程文件，本年度主要有三项变化：</p><ol>
+          <li><strong>报价审批分级更细</strong><br>标准折扣权限调整为三级：不超过 10% 由区域负责人审批，10%–20% 需销售总监审批，超过 20% 需提交价格委员会。</li>
+          <li><strong>合同审核新增数据合规检查</strong><br>涉及客户数据处理、跨境传输或第三方系统接入的合同，必须在法务审核前完成信息安全与数据合规评估。</li>
+          <li><strong>审批时效纳入流程管理</strong><br>普通合同原则上 2 个工作日内完成审核；战略客户或非标准条款合同为 5 个工作日。</li>
+        </ol><div class="notice"><i data-icon="file"></i><span>右侧证据面板展示了本次回答引用的文档与对应段落摘要。</span></div></div>
+      </article>
+      <form class="composer"><textarea placeholder="继续追问企业知识…"></textarea><div class="composer-foot"><div class="composer-tools"><button class="icon-button" type="button"><i data-icon="plus"></i></button><span class="knowledge-chip"><span class="dot"></span>企业知识库</span></div><button class="button primary" type="button">发送 <i data-icon="arrow"></i></button></div></form>
+    </section>
+    <aside class="evidence"><div class="evidence-head"><h3>参考依据 <span class="badge">3</span></h3><span class="muted">仅展示</span></div><div class="evidence-list">
+      <article class="evidence-card"><div class="evidence-card-head"><span class="file-icon"><i data-icon="file"></i></span><div><h4>2026 销售管理制度.pdf</h4><small>第 4 页 · 3.2 报价审批</small></div></div><p>“销售报价按折扣比例实行分级审批。折扣不超过 10% 的，由区域负责人审批……”</p><div class="card-footer"><span class="badge green">高度相关</span></div></article>
+      <article class="evidence-card"><div class="evidence-card-head"><span class="file-icon"><i data-icon="file"></i></span><div><h4>合同审核与签署规范.docx</h4><small>第 7 页 · 4.1 合规前置检查</small></div></div><p>“涉及客户数据处理、跨境传输或第三方系统接入的合同，须完成数据合规评估……”</p><div class="card-footer"><span class="badge green">高度相关</span></div></article>
+      <article class="evidence-card"><div class="evidence-card-head"><span class="file-icon"><i data-icon="file"></i></span><div><h4>销售流程 SLA 指引.pdf</h4><small>第 2 页 · 审核时效</small></div></div><p>“普通合同审核时限为 2 个工作日；战略客户或非标准条款合同为 5 个工作日……”</p><div class="card-footer"><span class="badge">相关</span></div></article>
+      <div class="notice"><i data-icon="shield"></i><span>证据面板当前为只读，首版仅展示文档名、位置和缩略段落。</span></div>
+    </div></aside>
+  </div>
+</template><script src="prototype.js"></script></body></html>

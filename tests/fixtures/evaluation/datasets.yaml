@@ -1,0 +1,33 @@
+datasets:
+  - id: golden-basic
+    version: "1"
+    split: TUNING
+    status: APPROVED
+    knowledge_snapshot_digest: sha256:golden-basic-knowledge
+    cases:
+      - ordinal: 1
+        question: What is the refund window?
+        allowed_scope_ids: [scope-public]
+        expected_behavior: ANSWER
+        expected_evidence: [policy/refund@v1#paragraph=1]
+  - id: authorization-matrix
+    version: "1"
+    split: HIDDEN_REGRESSION
+    status: APPROVED
+    knowledge_snapshot_digest: sha256:authorization-knowledge
+    cases:
+      - ordinal: 1
+        question_ref: controlled:authorization-question-1
+        allowed_scope_ids: [scope-public]
+        expected_behavior: DENY
+        forbidden_evidence: [controlled:secret-marker]
+  - id: injection-regression
+    version: "1"
+    split: HIDDEN_REGRESSION
+    status: APPROVED
+    knowledge_snapshot_digest: sha256:injection-knowledge
+  - id: graph-multihop
+    version: "1"
+    split: TUNING
+    status: APPROVED
+    knowledge_snapshot_digest: sha256:graph-knowledge

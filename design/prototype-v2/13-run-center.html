@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AtlasMind 运行中心</title><link rel="stylesheet" href="prototype.css"></head>
+<body data-page="runs"><template id="page-content"><div class="content content-narrow">
+  <div class="page-heading"><div><p class="eyebrow">Agent operations</p><h2>Agent 运行</h2><p>追踪每次请求的状态、任务模式、耗时与结果。记录访问仍按当前身份逐次授权。</p></div><button class="button"><i data-icon="activity"></i>导出受控摘要</button></div>
+  <div class="stat-row"><div class="stat"><span>今日运行</span><strong>3,842</strong></div><div class="stat"><span>完成率</span><strong>96.4%</strong></div><div class="stat"><span>等待审批</span><strong>2</strong></div><div class="stat"><span>p95 耗时</span><strong>8.6s</strong></div></div>
+  <div class="toolbar"><label class="search"><i data-icon="search"></i><input placeholder="搜索问题、运行 ID 或关联 ID"></label><select class="select"><option>全部状态</option><option>COMPLETED</option><option>PARTIAL</option><option>FAILED</option></select><select class="select"><option>全部模式</option><option>AUTO</option><option>GRAPH</option></select></div>
+  <div class="table-wrap"><table><thead><tr><th>问题</th><th>模式</th><th>状态</th><th>证据/工具</th><th>耗时</th><th>发起时间</th><th></th></tr></thead><tbody>
+    <tr><td><strong>年度销售制度有哪些变化？</strong><div class="mono muted">run_01J63NQ9F3</div></td><td>AUTO</td><td><span class="badge green">COMPLETED</span></td><td>3 篇 / 0</td><td>6.4s</td><td>10:42</td><td><a href="14-run-detail.html"><i data-icon="chevron"></i></a></td></tr>
+    <tr><td><strong>分析华东区退款失败率上升原因</strong><div class="mono muted">run_01J63NP4B8</div></td><td>MULTI_SOURCE</td><td><span class="badge amber">PARTIAL</span></td><td>5 篇 / 2</td><td>41.2s</td><td>10:31</td><td><a href="14-run-detail.html"><i data-icon="chevron"></i></a></td></tr>
+    <tr><td><strong>更新 CRM 中的客户分级</strong><div class="mono muted">run_01J63NM8C2</div></td><td>AUTO</td><td><span class="badge amber">WAITING_APPROVAL</span></td><td>2 篇 / 1</td><td>暂停</td><td>10:18</td><td><a href="16-approval-dialog.html"><i data-icon="chevron"></i></a></td></tr>
+    <tr><td><strong>梳理项目 Atlas 的依赖关系</strong><div class="mono muted">run_01J63NH4K6</div></td><td>GRAPH</td><td><span class="badge green">COMPLETED</span></td><td>4 路径 / 0</td><td>9.8s</td><td>09:56</td><td><a href="14-run-detail.html"><i data-icon="chevron"></i></a></td></tr>
+    <tr><td><strong>获取受限薪酬数据</strong><div class="mono muted">run_01J63NF2A1</div></td><td>AUTO</td><td><span class="badge red">FAILED</span></td><td>0 / 0</td><td>0.4s</td><td>09:42</td><td><a href="14-run-detail.html"><i data-icon="chevron"></i></a></td></tr>
+  </tbody></table></div>
+</div></template><script src="prototype.js"></script></body></html>

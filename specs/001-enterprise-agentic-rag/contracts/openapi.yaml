@@ -1,0 +1,937 @@
+openapi: 3.1.0
+info:
+  title: AtlasMind Enterprise Knowledge Agent API
+  version: 1.0.0-draft
+  description: >-
+    Versioned public contract for enterprise knowledge queries, ingestion, approvals,
+    evaluation, and authorized run inspection. Identity, roles, and knowledge scopes are
+    derived from the verified bearer token and are never accepted from a public request body.
+servers:
+  - url: /api
+security:
+  - enterpriseBearer: []
+tags:
+  - name: Agent Runs
+  - name: Knowledge
+  - name: Approvals
+  - name: Evaluation
+
+paths:
+  /v1/agent-runs:
+    post:
+      tags: [Agent Runs]
+      operationId: createAgentRun
+      summary: Submit a simple knowledge query or multi-step analysis task
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentRunRequest'
+      responses:
+        '202':
+          description: Run accepted or already accepted with the same idempotency key
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/agent-runs/{runId}:
+    get:
+      tags: [Agent Runs]
+      operationId: getAgentRun
+      summary: Read current run status and authorized result
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Run visible to the current principal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+
+  /v1/agent-runs/{runId}/cancel:
+    post:
+      tags: [Agent Runs]
+      operationId: cancelAgentRun
+      summary: Request cancellation of a run owned by the current principal
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '202':
+          description: Cancellation accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/documents:
+    post:
+      tags: [Knowledge]
+      operationId: uploadDocument
+      summary: Create a document and initial immutable version
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title, sourceKey, knowledgeScopeCodes]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                sourceKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 300
+                knowledgeScopeCodes:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                metadata:
+                  type: string
+                  description: JSON object validated against the active metadata schema
+      responses:
+        '202':
+          description: Upload accepted and ingestion job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadResult'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+        '409':
+          description: Duplicate or version relation requires a caller decision
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /v1/documents/{documentId}:
+    get:
+      tags: [Knowledge]
+      operationId: getDocument
+      summary: Read document metadata visible to the current principal
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Visible document metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+    delete:
+      tags: [Knowledge]
+      operationId: revokeDocument
+      summary: Revoke a document from future retrieval
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '202':
+          description: Document synchronously hidden and projection cleanup scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+
+  /v1/documents/{documentId}/versions:
+    post:
+      tags: [Knowledge]
+      operationId: uploadDocumentVersion
+      summary: Add an immutable replacement version
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                versionLabel:
+                  type: string
+                  maxLength: 100
+                metadata:
+                  type: string
+                  description: JSON object validated against the active metadata schema
+      responses:
+        '202':
+          description: Version and ingestion job created; active version is unchanged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadResult'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/ingestion-jobs/{jobId}:
+    get:
+      tags: [Knowledge]
+      operationId: getIngestionJob
+      summary: Read an authorized ingestion job
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Ingestion state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionJob'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+
+  /v1/ingestion-jobs/{jobId}/retry:
+    post:
+      tags: [Knowledge]
+      operationId: retryIngestionJob
+      summary: Retry a corrected failed ingestion job
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Retry accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionJob'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/document-versions/{versionId}/metadata-review:
+    post:
+      tags: [Knowledge]
+      operationId: reviewDocumentVersionMetadata
+      summary: Confirm or correct critical metadata before activation
+      parameters:
+        - $ref: '#/components/parameters/DocumentVersionId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetadataReviewRequest'
+      responses:
+        '200':
+          description: Metadata review recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetadataReviewResult'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/graph/conflicts:
+    get:
+      tags: [Graph Governance]
+      operationId: listGraphConflicts
+      summary: List conflicted graph relations visible to an authorized graph manager
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Conflicted relation identifiers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphConflictList'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+
+  /v1/graph/entities/{entityId}/merge:
+    post:
+      tags: [Graph Governance]
+      operationId: mergeGraphEntity
+      summary: Merge an entity into an approved canonical target
+      parameters:
+        - name: entityId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GraphEntityMergeRequest'
+      responses:
+        '200':
+          description: Entity merge recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphEntityMergeResult'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+
+  /v1/approval-requests/{approvalId}:
+    get:
+      tags: [Approvals]
+      operationId: getApprovalRequest
+      summary: Read an approval challenge visible to the current approver
+      parameters:
+        - $ref: '#/components/parameters/ApprovalId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Approval challenge with normalized target and parameter summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRequest'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+
+  /v1/approval-requests/{approvalId}/decision:
+    post:
+      tags: [Approvals]
+      operationId: decideApprovalRequest
+      summary: Approve or deny one parameter-bound side effect
+      parameters:
+        - $ref: '#/components/parameters/ApprovalId'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalDecision'
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRequest'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+
+  /v1/evaluation-runs:
+    post:
+      tags: [Evaluation]
+      operationId: createEvaluationRun
+      summary: Run an approved, versioned evaluation dataset
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEvaluationRunRequest'
+      responses:
+        '202':
+          description: Evaluation queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationRun'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+
+  /v1/evaluation-runs/{evaluationRunId}:
+    get:
+      tags: [Evaluation]
+      operationId: getEvaluationRun
+      summary: Read authorized evaluation status and gate results
+      parameters:
+        - name: evaluationRunId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Evaluation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationRun'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+
+components:
+  securitySchemes:
+    enterpriseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: Caller correlation ID; server generates one when absent
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 200
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DocumentVersionId:
+      name: versionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ApprovalId:
+      name: approvalId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  headers:
+    CorrelationId:
+      schema:
+        type: string
+        format: uuid
+      description: Effective correlation ID
+
+  schemas:
+    CreateAgentRunRequest:
+      type: object
+      additionalProperties: false
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 16000
+        mode:
+          type: string
+          enum: [AUTO, SIMPLE, MULTI_SOURCE, GRAPH]
+          default: AUTO
+        conversationId:
+          type: [string, 'null']
+          format: uuid
+        responseLanguage:
+          type: [string, 'null']
+          maxLength: 20
+        clientContext:
+          type: object
+          additionalProperties: false
+          properties:
+            locale:
+              type: string
+              maxLength: 20
+      description: Roles, subject, and knowledge scopes are intentionally absent
+
+    AgentRun:
+      type: object
+      required: [id, correlationId, state, createdAt, links]
+      properties:
+        id:
+          type: string
+          format: uuid
+        correlationId:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [QUEUED, RUNNING, WAITING_APPROVAL, COMPLETED, PARTIAL, FAILED, TIMED_OUT, CANCELLED]
+        taskType:
+          type: string
+          enum: [SIMPLE, MULTI_SOURCE, GRAPH]
+        createdAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: [string, 'null']
+          format: date-time
+        answer:
+          oneOf:
+            - $ref: '#/components/schemas/Answer'
+            - type: 'null'
+        pendingApproval:
+          oneOf:
+            - $ref: '#/components/schemas/ApprovalRequestSummary'
+            - type: 'null'
+        failure:
+          oneOf:
+            - $ref: '#/components/schemas/Failure'
+            - type: 'null'
+        links:
+          type: object
+          required: [self]
+          properties:
+            self:
+              type: string
+            approval:
+              type: [string, 'null']
+
+    Answer:
+      type: object
+      required: [text, confidence, evidenceStatus, citations]
+      properties:
+        text:
+          type: string
+        confidence:
+          type: string
+          enum: [HIGH, MEDIUM, LOW]
+        evidenceStatus:
+          type: string
+          enum: [SUFFICIENT, PARTIAL, CONFLICTED, INSUFFICIENT]
+        limitations:
+          type: array
+          items:
+            type: string
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Citation'
+
+    Citation:
+      type: object
+      required: [id, claimLocator, source, supportStatus]
+      properties:
+        id:
+          type: string
+          format: uuid
+        claimLocator:
+          type: string
+        source:
+          $ref: '#/components/schemas/SourceReference'
+        supportStatus:
+          type: string
+          enum: [SUPPORTED, PARTIAL, CONFLICTED]
+
+    SourceReference:
+      type: object
+      required: [type, id, version, locator, title]
+      properties:
+        type:
+          type: string
+          enum: [DOCUMENT, STRUCTURED, GRAPH, EXTERNAL]
+        id:
+          type: string
+        version:
+          type: string
+        locator:
+          type: string
+        title:
+          type: string
+        href:
+          type: [string, 'null']
+
+    Failure:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+          enum: [INSUFFICIENT_EVIDENCE, SOURCE_UNAVAILABLE, TOOL_FAILED, BUDGET_EXCEEDED, AUTHORIZATION_CHANGED, INTERNAL_ERROR]
+        message:
+          type: string
+        retryable:
+          type: boolean
+
+    DocumentUploadResult:
+      type: object
+      required: [document, versionId, ingestionJob]
+      properties:
+        document:
+          $ref: '#/components/schemas/Document'
+        versionId:
+          type: string
+          format: uuid
+        ingestionJob:
+          $ref: '#/components/schemas/IngestionJob'
+
+    Document:
+      type: object
+      required: [id, title, sourceKey, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        sourceKey:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, REVOKED, DELETED]
+        activeVersionId:
+          type: [string, 'null']
+          format: uuid
+        knowledgeScopes:
+          type: array
+          items:
+            type: string
+          description: Only scope labels the current principal may discover
+        createdAt:
+          type: string
+          format: date-time
+
+    IngestionJob:
+      type: object
+      required: [id, documentVersionId, state, currentStage, attempt, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        documentVersionId:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [QUEUED, RUNNING, WAITING_METADATA_REVIEW, SEARCHABLE, FAILED, CANCELLED]
+        currentStage:
+          type: string
+          enum: [VALIDATING, PARSING, CHUNKING, METADATA, LEXICAL_INDEX, VECTOR_INDEX, GRAPH_INDEX, ACTIVATING]
+        attempt:
+          type: integer
+          minimum: 0
+        failure:
+          oneOf:
+            - $ref: '#/components/schemas/Failure'
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: [string, 'null']
+          format: date-time
+
+    MetadataReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [approved]
+      properties:
+        approved:
+          type: boolean
+        corrections:
+          type: object
+          additionalProperties: true
+          default: {}
+
+    MetadataReviewResult:
+      type: object
+      additionalProperties: false
+      required: [documentVersionId, approved, metadata]
+      properties:
+        documentVersionId:
+          type: string
+          format: uuid
+        approved:
+          type: boolean
+        metadata:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/MetadataReviewRecord'
+
+    MetadataReviewRecord:
+      type: object
+      additionalProperties: false
+      required: [value, status]
+      properties:
+        value: {}
+        status:
+          type: string
+          enum: [PENDING, CONFIRMED, REJECTED]
+
+    GraphConflictList:
+      type: object
+      additionalProperties: false
+      required: [relations]
+      properties:
+        relations:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    GraphEntityMergeRequest:
+      type: object
+      additionalProperties: false
+      required: [targetEntityId, approved]
+      properties:
+        targetEntityId:
+          type: string
+          format: uuid
+        approved:
+          type: boolean
+
+    GraphEntityMergeResult:
+      type: object
+      additionalProperties: false
+      required: [id, status, mergedIntoId]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [MERGED]
+        mergedIntoId:
+          type: string
+          format: uuid
+
+    ApprovalRequestSummary:
+      type: object
+      required: [id, state, capability, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [PENDING, APPROVED, DENIED, EXPIRED, CONSUMED]
+        capability:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+
+    ApprovalRequest:
+      allOf:
+        - $ref: '#/components/schemas/ApprovalRequestSummary'
+        - type: object
+          required: [targetSummary, parameterSummary, correlationId]
+          properties:
+            targetSummary:
+              type: string
+            parameterSummary:
+              type: object
+              additionalProperties: true
+              description: Redacted, normalized parameters bound to this decision
+            correlationId:
+              type: string
+              format: uuid
+
+    ApprovalDecision:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [APPROVE, DENY]
+        reason:
+          type: [string, 'null']
+          maxLength: 1000
+
+    CreateEvaluationRunRequest:
+      type: object
+      additionalProperties: false
+      required: [datasetId, datasetVersion]
+      properties:
+        datasetId:
+          type: string
+          minLength: 1
+        datasetVersion:
+          type: string
+        retrievalPolicyVersion:
+          type: [string, 'null']
+
+    EvaluationRun:
+      type: object
+      required: [id, dataset, state, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [QUEUED, RUNNING, PASSED, FAILED, INVALID]
+        dataset:
+          type: object
+          additionalProperties: false
+          required: [id, version]
+          properties:
+            id:
+              type: string
+            version:
+              type: string
+        createdAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: [string, 'null']
+          format: date-time
+        reportRef:
+          type: [string, 'null']
+          format: uri-reference
+        gates:
+          type: array
+          items:
+            type: object
+            required: [name, passed]
+            properties:
+              name:
+                type: string
+              passed:
+                type: boolean
+              value:
+                type: [number, string, 'null']
+              threshold:
+                type: [number, string, 'null']
+
+    Problem:
+      type: object
+      required: [type, title, status, code, correlationId]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string
+        detail:
+          type: string
+        correlationId:
+          type: string
+          format: uuid
+        retryable:
+          type: boolean
+
+  responses:
+    InvalidRequest:
+      description: Invalid request
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthenticated:
+      description: Missing or invalid enterprise identity
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ActionNotAllowed:
+      description: Current principal cannot perform this known action
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ResourceNotAvailable:
+      description: Resource does not exist or is not visible to the current principal
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    InvalidState:
+      description: Resource cannot accept this transition
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    RateLimited:
+      description: Request exceeds an applicable budget or rate limit
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'

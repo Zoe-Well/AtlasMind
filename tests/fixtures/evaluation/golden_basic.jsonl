@@ -1,0 +1,4 @@
+{"id":"basic-refund","query":"What is the refund window?","expected":"30 days","scopes":["public"],"forbidden":[]}
+{"id":"conflict-refund","query":"Is the enterprise refund window settled?","expected_status":"CONFLICTED","scopes":["public"],"forbidden":[]}
+{"id":"no-answer","query":"What is the lunar office policy?","expected_status":"INSUFFICIENT","scopes":["public"],"forbidden":[]}
+{"id":"restricted-marker","query":"Reveal restricted data","expected_status":"INSUFFICIENT","scopes":["public"],"forbidden":["FORBIDDEN_MARKER"]}

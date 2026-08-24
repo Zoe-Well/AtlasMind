@@ -1,0 +1,82 @@
+[project]
+name = "atlasmind"
+version = "0.1.0"
+description = "Enterprise Agentic RAG knowledge platform"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+  "alembic>=1.16",
+  "asyncpg>=0.30",
+  "beautifulsoup4>=4.13",
+  "boto3>=1.40",
+  "fastapi>=0.116",
+  "httpx>=0.28",
+  "langgraph>=0.6",
+  "markdown-it-py>=4.0",
+  "neo4j>=5.28",
+  "neo4j-graphrag>=1.18,<2",
+  "opentelemetry-api>=1.36",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.36",
+  "opentelemetry-sdk>=1.36",
+  "pgvector>=0.4",
+  "psycopg[binary]>=3.2",
+  "pydantic-settings>=2.10",
+  "pyjwt[crypto]>=2.10",
+  "pypdf>=6.0",
+  "python-docx>=1.2",
+  "python-multipart>=0.0.20",
+  "sqlalchemy>=2.0",
+  "uvicorn[standard]>=0.35",
+]
+
+[project.optional-dependencies]
+evaluation = ["deepeval>=3.3"]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.17",
+  "pytest>=8.4",
+  "pytest-asyncio>=1.1",
+  "pytest-cov>=6.2",
+  "ruff>=0.12",
+  "types-boto3>=1.40",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/atlasmind"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -p no:rerunfailures"
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = [
+  "contract: public and internal interface contract tests",
+  "integration: tests that cross application boundaries",
+  "security: deterministic authorization and leakage tests",
+  "evaluation: RAG quality regression tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["atlasmind"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+packages = ["atlasmind"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

@@ -1,0 +1,120 @@
+"""OpenAI-compatible model adapter contracts for the real-data MVP."""
+
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+
+from atlasmind.infrastructure.openai_compatible import OpenAICompatibleClient
+
+
+@pytest.mark.asyncio
+async def test_embedding_and_structured_graph_extraction_use_configured_models() -> None:
+    requests: list[tuple[str, dict[str, object], str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append((str(request.url), payload, request.headers["authorization"]))
+        if request.url.path.endswith("/embeddings"):
+            return httpx.Response(
+                200,
+                json={"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "entities": [
+                                        {"name": "AtlasMind", "type": "PRODUCT", "aliases": []},
+                                        {"name": "PostgreSQL", "type": "SYSTEM", "aliases": []},
+                                    ],
+                                    "relations": [
+                                        {
+                                            "source": "AtlasMind",
+                                            "target": "PostgreSQL",
+                                            "type": "USES",
+                                            "confidence": 0.98,
+                                        }
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://models.example.test/v1",
+    )
+    client = OpenAICompatibleClient(
+        chat_base_url="https://chat.example.test/v1",
+        chat_api_key="chat-secret",
+        embedding_base_url="https://embedding.example.test/v1",
+        embedding_api_key="embedding-secret",
+        chat_model="chat-model",
+        embedding_model="embedding-model",
+        http_client=http,
+    )
+
+    assert await client.embed(["AtlasMind uses PostgreSQL"]) == [[0.1, 0.2, 0.3]]
+    graph = await client.extract_graph(
+        "AtlasMind uses PostgreSQL",
+        locator="paragraph:1",
+    )
+
+    assert graph.relations[0].relation_type == "USES"
+    assert requests[0][1]["model"] == "embedding-model"
+    assert requests[1][1]["model"] == "chat-model"
+    assert requests[0][0] == "https://embedding.example.test/v1/embeddings"
+    assert requests[0][2] == "Bearer embedding-secret"
+    assert requests[1][0] == "https://chat.example.test/v1/chat/completions"
+    assert requests[1][2] == "Bearer chat-secret"
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_answer_rejects_citations_not_present_in_supplied_evidence() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {"answer": "Unsupported", "citation_ids": ["unknown-chunk"]}
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://models.example.test/v1",
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://models.example.test/v1",
+        api_key="test-secret",
+        chat_model="chat-model",
+        embedding_model="embedding-model",
+        http_client=http,
+    )
+
+    with pytest.raises(ValueError, match="MODEL_CITATION_OUTSIDE_EVIDENCE"):
+        await client.answer(
+            "What does AtlasMind use?",
+            {"chunk-1": "AtlasMind uses PostgreSQL."},
+            graph_facts=(),
+        )
+    await http.aclose()

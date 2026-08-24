@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AtlasMind RAG 策略</title><link rel="stylesheet" href="prototype.css"></head>
+<body data-page="rag"><template id="page-content"><div class="content content-narrow">
+  <div class="page-heading"><div><p class="eyebrow">Retrieval policy</p><h2>RAG 策略</h2><p>按请求类型选择检索来源与增强能力。首期为治理占位，所有策略必须经过版本化评估后才能发布。</p></div><a class="button primary" href="12-rag-strategy-editor.html"><i data-icon="plus"></i>新建策略</a></div>
+  <div class="notice amber" style="margin-bottom:18px"><i data-icon="alert"></i><span>此模块属于后续阶段占位。当前运行默认使用经过批准的 hybrid-v1，不允许浏览器覆盖权限过滤。</span></div>
+  <section class="panel"><div class="panel-head"><h3>策略版本</h3><div class="tabs"><button class="tab active">全部</button><button class="tab">已发布</button><button class="tab">草稿</button></div></div>
+    <div class="strategy-row"><div><strong>企业混合检索</strong><small>hybrid-v1 · 文档问答默认策略</small></div><span>语义 + 关键词</span><span>Rerank v2</span><span class="badge green">已发布</span><a class="button small" href="12-rag-strategy-editor.html">查看</a></div>
+    <div class="strategy-row"><div><strong>多源分析策略</strong><small>multi-source-v3 · Agent AUTO 模式</small></div><span>文档 + SQL</span><span>Rerank v2</span><span class="badge green">已发布</span><a class="button small" href="12-rag-strategy-editor.html">查看</a></div>
+    <div class="strategy-row"><div><strong>GraphRAG 探索</strong><small>graph-hybrid-v2 · 单跳/多跳关系</small></div><span>向量 + 图</span><span>Path score</span><span class="badge amber">灰度 10%</span><a class="button small" href="12-rag-strategy-editor.html">编辑</a></div>
+    <div class="strategy-row"><div><strong>上下文压缩实验</strong><small>compression-exp-4 · 未发布</small></div><span>Hybrid</span><span>Compression</span><span class="badge">草稿</span><a class="button small" href="12-rag-strategy-editor.html">编辑</a></div>
+  </section>
+  <div class="grid-3" style="margin-top:18px"><div class="card"><h3>策略发布要求</h3><p>固定回归集通过，引用准确性不低于 95%，权限泄露为 0。</p></div><div class="card"><h3>快速关闭</h3><p>增强策略必须支持独立关闭并回退到已批准基线。</p></div><div class="card"><h3>版本不可变</h3><p>已发布版本只能停用，任何修改都创建新版本。</p></div></div>
+</div></template><script src="prototype.js"></script></body></html>

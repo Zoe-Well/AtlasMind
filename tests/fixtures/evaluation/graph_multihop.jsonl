@@ -1,0 +1,6 @@
+{"id":"single-hop","query":"What queue does Refund Service write to?","expectedRelations":["Refund Service|WRITES_TO|Refund Queue"],"expectedBehavior":"ANSWER"}
+{"id":"multi-hop","query":"Which team ultimately owns the queue used by Refund Service?","expectedRelations":["Refund Service|WRITES_TO|Refund Queue","Refund Queue|OWNED_BY|Payments Team"],"expectedBehavior":"ANSWER"}
+{"id":"no-path","query":"How is Refund Service related to Hiring?","expectedRelations":[],"expectedBehavior":"INSUFFICIENT"}
+{"id":"alias","query":"What does the refunds svc depend on?","aliases":{"refunds svc":"Refund Service"},"expectedBehavior":"ANSWER"}
+{"id":"conflict","query":"Who owns Refund Queue?","conflictedRelations":["OWNED_BY"],"expectedBehavior":"CONFLICT"}
+{"id":"forbidden-relation","query":"Show the restricted ownership chain","forbiddenRelations":["Secret Team|OWNS|Refund Service"],"expectedBehavior":"DENY"}

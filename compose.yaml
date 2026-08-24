@@ -1,0 +1,130 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: atlasmind
+      POSTGRES_USER: atlasmind
+      POSTGRES_PASSWORD: atlasmind-local-only
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlasmind -d atlasmind"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: atlasmind-local
+      MINIO_ROOT_PASSWORD: atlasmind-local-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: neo4j/atlasmind-local-secret
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.131.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./.specify/otel-collector.local.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      ATLASMIND_AUTH_MODE: ${ATLASMIND_AUTH_MODE:-local}
+      ATLASMIND_SESSION_SECRET: ${ATLASMIND_SESSION_SECRET:-atlasmind-local-session-secret-change-before-production}
+      ATLASMIND_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["sh", "-c", "alembic upgrade head && uvicorn atlasmind.api.app:create_app --factory --host 0.0.0.0 --port 8000"]
+    environment: &backend-environment
+      ATLASMIND_ENVIRONMENT: development
+      ATLASMIND_AUTH_MODE: local
+      ATLASMIND_DATABASE_URL: postgresql+asyncpg://atlasmind:atlasmind-local-only@postgres:5432/atlasmind
+      ATLASMIND_OBJECT_STORE_ENDPOINT: http://minio:9000
+      ATLASMIND_OBJECT_STORE_BUCKET: atlasmind
+      ATLASMIND_OBJECT_STORE_ACCESS_KEY: atlasmind-local
+      ATLASMIND_OBJECT_STORE_SECRET_KEY: atlasmind-local-secret
+      ATLASMIND_MODEL_BASE_URL: ${ATLASMIND_MODEL_BASE_URL:-http://host.docker.internal:11434/v1}
+      ATLASMIND_MODEL_API_KEY: ${ATLASMIND_MODEL_API_KEY:-ollama-local}
+      ATLASMIND_CHAT_BASE_URL: ${ATLASMIND_CHAT_BASE_URL:-}
+      ATLASMIND_CHAT_API_KEY: ${ATLASMIND_CHAT_API_KEY:-}
+      ATLASMIND_CHAT_MODEL: ${ATLASMIND_CHAT_MODEL:-}
+      ATLASMIND_EMBEDDING_BASE_URL: ${ATLASMIND_EMBEDDING_BASE_URL:-}
+      ATLASMIND_EMBEDDING_API_KEY: ${ATLASMIND_EMBEDDING_API_KEY:-}
+      ATLASMIND_EMBEDDING_MODEL: ${ATLASMIND_EMBEDDING_MODEL:-}
+      ATLASMIND_NEO4J_URI: bolt://neo4j:7687
+      ATLASMIND_NEO4J_USERNAME: neo4j
+      ATLASMIND_NEO4J_PASSWORD: atlasmind-local-secret
+      ATLASMIND_OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      neo4j:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  ingestion-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "atlasmind.workers.real_ingestion"]
+    environment:
+      <<: *backend-environment
+      ATLASMIND_PROCESS_ROLE: ingestion
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  minio-data:
+  neo4j-data:

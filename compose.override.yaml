@@ -1,0 +1,12 @@
+services:
+  frontend:
+    build:
+      target: development
+    environment:
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+
+volumes:
+  frontend-node-modules:
