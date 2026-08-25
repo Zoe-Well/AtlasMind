@@ -131,18 +131,24 @@ pnpm dev
 
 ## 测试与质量检查
 
-~~~bash
-uv run ruff check src tests
-uv run mypy src
-uv run pytest tests/contract tests/security tests/integration -q
+首次运行先安装后端和前端依赖，然后使用统一质量门禁：
 
-cd frontend
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
-pnpm test:e2e
+~~~bash
+uv sync --all-extras --all-groups --locked
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend exec playwright install chromium
+scripts/quality_gate.sh all
 ~~~
+
+也可以只运行指定门禁：
+
+~~~bash
+scripts/quality_gate.sh backend
+scripts/quality_gate.sh frontend
+scripts/quality_gate.sh e2e
+~~~
+
+GitHub Actions 使用相同入口分别执行完整后端、前端和关键 Playwright 流程。页面截图是独立的可选任务，不属于必需质量门禁。
 
 真实存储端到端测试需要先启动 PostgreSQL、MinIO 和 Neo4j，并设置 <code>ATLASMIND_RUN_REAL_MVP=1</code>。
 
