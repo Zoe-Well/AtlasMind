@@ -59,6 +59,7 @@ class StubRuntime:
 
 def settings() -> Settings:
     return Settings(
+        _env_file=None,
         environment="development",
         auth_mode="local",
         database_url="postgresql+asyncpg://user:password@localhost:5432/atlasmind",
@@ -74,7 +75,9 @@ def settings() -> Settings:
 
 
 @pytest.mark.asyncio
-async def test_local_api_upload_maps_scope_to_server_owned_uuid_without_demo_fallback() -> None:
+async def test_local_api_upload_maps_scope_to_server_owned_uuid_without_demo_fallback(
+    isolated_atlasmind_environment: None,
+) -> None:
     runtime = StubRuntime()
     app = create_app(settings(), runtime=runtime)  # type: ignore[arg-type]
 

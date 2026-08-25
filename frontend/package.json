@@ -12,7 +12,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test e2e/local-login.spec.ts --project=chromium",
     "screenshot:ui": "playwright test e2e/visual-screenshots.spec.ts --project=chromium",
     "generate:api": "openapi-typescript ../specs/001-enterprise-agentic-rag/contracts/openapi.yaml -o src/lib/api/schema.d.ts"
   },

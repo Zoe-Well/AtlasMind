@@ -39,9 +39,9 @@ def test_planned_dependency_imports_on_python_314(module: str) -> None:
 
 
 @pytest.mark.contract
-def test_settings_reject_missing_secrets() -> None:
+def test_settings_reject_missing_secrets(isolated_atlasmind_environment: None) -> None:
     with pytest.raises(ValidationError):
-        Settings()  # type: ignore[call-arg]
+        Settings(_env_file=None)  # type: ignore[call-arg]
 
 
 @pytest.mark.contract

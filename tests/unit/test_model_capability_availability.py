@@ -65,8 +65,11 @@ async def test_ingestion_worker_stays_idle_when_models_are_unconfigured() -> Non
 
 
 @pytest.mark.asyncio
-async def test_api_starts_and_reports_unconfigured_model_capabilities() -> None:
+async def test_api_starts_and_reports_unconfigured_model_capabilities(
+    isolated_atlasmind_environment: None,
+) -> None:
     settings = Settings(
+        _env_file=None,
         environment="development",
         auth_mode="local",
         database_url="postgresql+asyncpg://user:password@localhost:5432/atlasmind",
