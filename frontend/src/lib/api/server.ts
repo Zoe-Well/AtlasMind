@@ -22,6 +22,6 @@ export async function backendFetch(
   }
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${session.accessToken}`);
-  headers.set("accept", "application/json");
+  if (!headers.has("accept")) headers.set("accept", "application/json");
   return fetch(`${baseUrl}${path}`, { ...init, headers, cache: "no-store" });
 }

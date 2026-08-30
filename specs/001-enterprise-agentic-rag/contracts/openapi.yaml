@@ -17,7 +17,34 @@ tags:
   - name: Evaluation
 
 paths:
+  /v1/capabilities:
+    get:
+      tags: [Knowledge]
+      operationId: getRuntimeCapabilities
+      summary: Read server-owned runtime feature availability
+      responses:
+        '200':
+          description: Persistent runtime capabilities
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeCapabilities' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
   /v1/agent-runs:
+    get:
+      tags: [Agent Runs]
+      operationId: listAgentRuns
+      summary: List recent runs owned by the current principal
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Recent authorized runs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentRunList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
     post:
       tags: [Agent Runs]
       operationId: createAgentRun
@@ -87,8 +114,53 @@ paths:
           $ref: '#/components/responses/ResourceNotAvailable'
         '409':
           $ref: '#/components/responses/InvalidState'
+  /v1/agent-runs/{runId}/events:
+    get:
+      tags: [Agent Runs]
+      operationId: streamAgentRunEvents
+      summary: Replay and follow the authorized AG-UI event stream
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - name: after
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string, pattern: '^[0-9]+$' }
+          description: Last persisted per-run sequence received by the client.
+      responses:
+        '200':
+          description: >-
+            SSE stream. Each data object is an AG-UI event with AtlasMind metadata
+            containing schemaVersion, eventId, sequence, runId, correlationId and visibility.
+            Retrieval Workflow progress uses ACTIVITY_SNAPSHOT with
+            activityType=atlasmind.retrieval. Its allowlisted content contains only stage,
+            strategyId, status, public summary, bounded counts/timing, selected strategy IDs and
+            a mapped degradation code; it never contains query text, prompt, scope or evidence body.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
 
   /v1/documents:
+    get:
+      tags: [Knowledge]
+      operationId: listDocuments
+      summary: List documents visible to the current principal
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: Authorized document list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
     post:
       tags: [Knowledge]
       operationId: uploadDocument
@@ -180,6 +252,19 @@ paths:
           $ref: '#/components/responses/ResourceNotAvailable'
 
   /v1/documents/{documentId}/versions:
+    get:
+      tags: [Knowledge]
+      operationId: listDocumentVersions
+      summary: List immutable versions visible for a document
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: Authorized document versions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentVersionList' }
+        '404': { $ref: '#/components/responses/ResourceNotAvailable' }
     post:
       tags: [Knowledge]
       operationId: uploadDocumentVersion
@@ -288,6 +373,202 @@ paths:
         '409':
           $ref: '#/components/responses/InvalidState'
 
+  /v1/graph:
+    get:
+      tags: [Graph Governance]
+      operationId: getGraphSnapshot
+      summary: Browse authorized active graph entities, relations, and provenance
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+        - name: query
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: entityType
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
+        - name: relationType
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
+        - name: minimumConfidence
+          in: query
+          schema: { type: number, minimum: 0, maximum: 1 }
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Authorized graph snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphSnapshot'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+
+  /v1/graph/entities:
+    get:
+      tags: [Graph Explorer]
+      operationId: searchGraphEntities
+      summary: Search entities visible through authorized active source documents
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: entityType
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Authorized entity matches
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphEntitySearchResult' }
+        '403': { $ref: '#/components/responses/ActionNotAllowed' }
+
+  /v1/graph/entities/{entityId}:
+    get:
+      tags: [Graph Explorer]
+      operationId: getGraphEntity
+      summary: Read an authorized entity and its source-document provenance
+      parameters:
+        - name: entityId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Authorized entity detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphEntityDetail' }
+        '404': { $ref: '#/components/responses/ResourceNotAvailable' }
+
+  /v1/graph/entities/{entityId}/neighbors:
+    get:
+      tags: [Graph Explorer]
+      operationId: getGraphEntityNeighbors
+      summary: Expand a bounded authorized local graph around an entity
+      parameters:
+        - name: entityId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: depth
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 3, default: 1 }
+        - name: entityType
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
+        - name: relationType
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
+        - name: minimumConfidence
+          in: query
+          schema: { type: number, minimum: 0, maximum: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 2, maximum: 200, default: 80 }
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Incremental authorized scene data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphSnapshot' }
+        '404': { $ref: '#/components/responses/ResourceNotAvailable' }
+
+  /v1/graph/relations/{relationId}:
+    get:
+      tags: [Graph Explorer]
+      operationId: getGraphRelation
+      summary: Read relation confidence and authorized source evidence
+      parameters:
+        - name: relationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Authorized relation evidence
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphEdge' }
+        '404': { $ref: '#/components/responses/ResourceNotAvailable' }
+
+  /v1/rag/strategies:
+    get:
+      tags: [Knowledge]
+      operationId: getRagStrategies
+      summary: Read the internal Retrieval Strategy catalog and active availability
+      responses:
+        '200':
+          description: Server-owned Strategy catalog; entries are not Agent tools
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RagStrategyCatalog' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /v1/rag/policy:
+    get:
+      tags: [Knowledge]
+      operationId: getRagPolicy
+      summary: Read the active versioned Advanced RAG policy
+      responses:
+        '200':
+          description: Active Advanced RAG policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RagPolicy' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    put:
+      tags: [Knowledge]
+      operationId: updateRagPolicy
+      summary: Validate and activate a new immutable Advanced RAG policy version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RagPolicyUpdate' }
+      responses:
+        '200':
+          description: Newly active Advanced RAG policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RagPolicy' }
+        '403': { $ref: '#/components/responses/ActionNotAllowed' }
+        '422': { $ref: '#/components/responses/InvalidRequest' }
+
   /v1/graph/conflicts:
     get:
       tags: [Graph Governance]
@@ -304,6 +585,45 @@ paths:
                 $ref: '#/components/schemas/GraphConflictList'
         '403':
           $ref: '#/components/responses/ActionNotAllowed'
+  /v1/graph/policy:
+    get:
+      tags: [Graph Governance]
+      operationId: getGraphPolicy
+      summary: Read the active entity filtering, resolution, and graph retrieval policy
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Active versioned graph policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphPolicy'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+    put:
+      tags: [Graph Governance]
+      operationId: updateGraphPolicy
+      summary: Replace the graph policy with a new immutable version
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GraphPolicyUpdate'
+      responses:
+        '200':
+          description: Newly active graph policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphPolicy'
+        '403':
+          $ref: '#/components/responses/ActionNotAllowed'
+        '422':
+          $ref: '#/components/responses/InvalidRequest'
 
   /v1/graph/entities/{entityId}/merge:
     post:
@@ -498,6 +818,22 @@ components:
       description: Effective correlation ID
 
   schemas:
+    RuntimeCapabilities:
+      type: object
+      required: [dataMode, localSuperAdmin, features]
+      properties:
+        dataMode: { type: string, enum: [persistent] }
+        localSuperAdmin: { type: boolean }
+        features:
+          type: object
+          required: [knowledge, agentRuns, graphConflicts, graphBrowse, approvals, evaluations]
+          properties:
+            knowledge: { type: boolean }
+            agentRuns: { type: boolean }
+            graphConflicts: { type: boolean }
+            graphBrowse: { type: boolean }
+            approvals: { type: boolean }
+            evaluations: { type: boolean }
     CreateAgentRunRequest:
       type: object
       additionalProperties: false
@@ -536,6 +872,9 @@ components:
         correlationId:
           type: string
           format: uuid
+        traceId:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{32}$'
         state:
           type: string
           enum: [QUEUED, RUNNING, WAITING_APPROVAL, COMPLETED, PARTIAL, FAILED, TIMED_OUT, CANCELLED]
@@ -560,14 +899,58 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Failure'
             - type: 'null'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunStepSummary'
         links:
           type: object
           required: [self]
           properties:
             self:
               type: string
-            approval:
-              type: [string, 'null']
+        approval:
+          type: [string, 'null']
+
+    RunStepSummary:
+      type: object
+      required: [id, ordinal, kind, state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        ordinal:
+          type: integer
+          minimum: 1
+        kind:
+          type: string
+          enum: [PLAN, RETRIEVAL, TOOL, COMPOSE, VERIFY]
+        state:
+          type: string
+          enum: [PENDING, RUNNING, WAITING_APPROVAL, SUCCEEDED, FAILED, SKIPPED]
+        capabilityName:
+          type: [string, 'null']
+          enum: [knowledge_search, search_knowledge, search_graph, query_structured_data, null]
+        resultRef:
+          type: [string, 'null']
+        startedAt:
+          type: [string, 'null']
+          format: date-time
+        finishedAt:
+          type: [string, 'null']
+          format: date-time
+
+    AgentRunList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentRun'
+        total:
+          type: integer
+          minimum: 0
 
     Answer:
       type: object
@@ -589,6 +972,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Citation'
+        graphPaths:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphPath'
 
     Citation:
       type: object
@@ -620,6 +1007,9 @@ components:
           type: string
         title:
           type: string
+        excerpt:
+          type: [string, 'null']
+          description: Authorization-filtered source excerpt for evidence preview
         href:
           type: [string, 'null']
 
@@ -672,6 +1062,55 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    DocumentList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+        total:
+          type: integer
+          minimum: 0
+
+    DocumentVersion:
+      type: object
+      required: [id, versionLabel, lifecycleState, searchable, sizeBytes, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        versionLabel:
+          type: string
+        lifecycleState:
+          type: string
+        searchable:
+          type: boolean
+        sizeBytes:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        ingestionJobId:
+          type: [string, 'null']
+          format: uuid
+        ingestionState:
+          type: [string, 'null']
+
+    DocumentVersionList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentVersion'
+        total:
+          type: integer
+          minimum: 0
 
     IngestionJob:
       type: object
@@ -750,6 +1189,267 @@ components:
           items:
             type: string
             format: uuid
+
+    GraphSnapshot:
+      type: object
+      additionalProperties: false
+      required: [nodes, edges, mode, truncated]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphEdge'
+        mode:
+          type: string
+          enum: [GLOBAL, LOCAL]
+        truncated: { type: boolean }
+        rootEntityId: { type: string, format: uuid }
+        depth: { type: integer, minimum: 1, maximum: 3 }
+
+    GraphEntitySearchResult:
+      type: object
+      additionalProperties: false
+      required: [items, truncated]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/GraphNode' }
+        truncated: { type: boolean }
+
+    GraphEntityDetail:
+      allOf:
+        - $ref: '#/components/schemas/GraphNode'
+        - type: object
+          required: [degree, properties, sourceDocuments]
+          properties:
+            degree: { type: integer, minimum: 0 }
+            properties:
+              type: object
+              additionalProperties: true
+            sourceDocuments:
+              type: array
+              items: { $ref: '#/components/schemas/GraphEntitySource' }
+
+    GraphEntitySource:
+      allOf:
+        - $ref: '#/components/schemas/GraphEvidence'
+        - type: object
+          required: [surface, confidence]
+          properties:
+            surface: { type: string }
+            confidence: { type: number, minimum: 0, maximum: 1 }
+    RagStrategyConfiguration:
+      type: object
+      additionalProperties: false
+      required: [enabled, settings]
+      properties:
+        enabled: { type: boolean }
+        settings:
+          type: object
+          additionalProperties: true
+
+    RetrievalRuntimeBudget:
+      type: object
+      additionalProperties: false
+      required:
+        - totalTimeoutMs
+        - strategyTimeoutMs
+        - maxLlmCalls
+        - maxEmbeddingCalls
+        - maxRetrievalCalls
+        - maxQueryVariants
+        - maxCandidatesPerRetriever
+        - maxTotalCandidates
+        - resultLimit
+        - maxStrategyRetries
+      properties:
+        totalTimeoutMs: { type: integer, minimum: 500, maximum: 8000 }
+        strategyTimeoutMs: { type: integer, minimum: 100, maximum: 4000 }
+        maxLlmCalls: { type: integer, minimum: 1, maximum: 6 }
+        maxEmbeddingCalls: { type: integer, minimum: 1, maximum: 12 }
+        maxRetrievalCalls: { type: integer, minimum: 1, maximum: 12 }
+        maxQueryVariants: { type: integer, minimum: 1, maximum: 5 }
+        maxCandidatesPerRetriever: { type: integer, minimum: 1, maximum: 80 }
+        maxTotalCandidates: { type: integer, minimum: 8, maximum: 240 }
+        resultLimit: { type: integer, minimum: 1, maximum: 12 }
+        maxStrategyRetries: { type: integer, minimum: 0, maximum: 1 }
+
+    RagPolicyUpdate:
+      type: object
+      additionalProperties: false
+      required: [strategies, budget]
+      properties:
+        strategies:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/RagStrategyConfiguration'
+        budget:
+          $ref: '#/components/schemas/RetrievalRuntimeBudget'
+
+    RagPolicy:
+      allOf:
+        - $ref: '#/components/schemas/RagPolicyUpdate'
+        - type: object
+          required: [version, canManage]
+          properties:
+            version: { type: integer, minimum: 1 }
+            canManage: { type: boolean }
+
+    RagStrategyCatalogItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - stage
+        - description
+        - enabled
+        - settings
+        - settingsSchema
+        - planParametersSchema
+        - conflictsWith
+      properties:
+        id: { type: string }
+        stage:
+          type: string
+          enum: [QUERY_PROCESSING, RETRIEVAL, FUSION, RERANK]
+        description: { type: string }
+        enabled: { type: boolean }
+        settings: { type: object, additionalProperties: true }
+        settingsSchema: { type: object, additionalProperties: true }
+        planParametersSchema: { type: object, additionalProperties: true }
+        conflictsWith:
+          type: array
+          items: { type: string }
+
+    RagStrategyCatalog:
+      type: object
+      additionalProperties: false
+      required: [policyVersion, strategies]
+      properties:
+        policyVersion: { type: integer, minimum: 1 }
+        strategies:
+          type: array
+          items: { $ref: '#/components/schemas/RagStrategyCatalogItem' }
+
+    GraphPolicyUpdate:
+      type: object
+      additionalProperties: false
+      required: [allowedEntityTypes, allowedRelationTypes]
+      properties:
+        allowedEntityTypes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [SYSTEM, PRODUCT, SERVICE, API, ERROR_CODE, ORGANIZATION, ORG_UNIT, DATABASE, QUEUE, TECH_COMPONENT]
+        allowedRelationTypes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [CALLS, CONSUMES, DEPENDS_ON, DEPLOYED_ON, EXPOSES, INTEGRATES_WITH, MANAGED_BY, OWNED_BY, PART_OF, PRODUCES, RETURNS_ERROR, STORES_IN, USES]
+        minimumEntityConfidence: { type: number, minimum: 0, maximum: 1, default: 0.6 }
+        minimumRelationConfidence: { type: number, minimum: 0, maximum: 1, default: 0.7 }
+        seedLimit: { type: integer, minimum: 1, maximum: 30, default: 8 }
+        maxHops: { type: integer, minimum: 1, maximum: 2, default: 2 }
+        maxNodes: { type: integer, minimum: 2, maximum: 200, default: 40 }
+        maxPaths: { type: integer, minimum: 1, maximum: 100, default: 24 }
+        maxGraphChunks: { type: integer, minimum: 1, maximum: 100, default: 24 }
+        allowedAliases:
+          type: object
+          additionalProperties:
+            type: string
+    GraphPolicy:
+      allOf:
+        - $ref: '#/components/schemas/GraphPolicyUpdate'
+        - type: object
+          required: [version, availableEntityTypes, canManage]
+          properties:
+            version: { type: integer, minimum: 1 }
+            availableEntityTypes:
+              type: array
+              minItems: 1
+              uniqueItems: true
+              items:
+                type: string
+                enum: [SYSTEM, PRODUCT, SERVICE, API, ERROR_CODE, ORGANIZATION, ORG_UNIT, DATABASE, QUEUE, TECH_COMPONENT]
+            canManage:
+              type: boolean
+              description: Whether the current principal may create a new graph policy version
+
+    GraphNode:
+      type: object
+      additionalProperties: false
+      required: [id, name, type, aliases, mentionCount, documentCount]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        type: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+        mentionCount: { type: integer, minimum: 1 }
+        documentCount: { type: integer, minimum: 1 }
+
+    GraphEdge:
+      type: object
+      additionalProperties: false
+      required: [id, source, target, type, confidence, evidence]
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string, format: uuid }
+        target: { type: string, format: uuid }
+        type: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphEvidence'
+
+    GraphEvidence:
+      type: object
+      additionalProperties: false
+      required: [documentId, documentTitle, documentVersionId, chunkId, locator]
+      properties:
+        documentId: { type: string, format: uuid }
+        documentTitle: { type: string }
+        documentVersionId: { type: string, format: uuid }
+        chunkId: { type: string, format: uuid }
+        locator: { type: string }
+
+    GraphPath:
+      type: object
+      additionalProperties: false
+      required: [entities, relations, directions, sources]
+      properties:
+        entities:
+          type: array
+          minItems: 2
+          items: { type: string }
+        relations:
+          type: array
+          minItems: 1
+          items: { type: string }
+        directions:
+          type: array
+          minItems: 1
+          items: { type: boolean }
+        sources:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [chunkId, locator]
+            properties:
+              chunkId: { type: string, format: uuid }
+              locator: { type: string }
 
     GraphEntityMergeRequest:
       type: object

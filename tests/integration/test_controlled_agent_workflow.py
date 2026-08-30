@@ -24,7 +24,11 @@ from atlasmind.tools.contracts import (
     CapabilityResult,
     RiskLevel,
 )
-from atlasmind.tools.execution_gateway import CapabilityRegistry, ExecutionGateway
+from atlasmind.tools.execution_gateway import (
+    CapabilityExecutionContext,
+    CapabilityRegistry,
+    ExecutionGateway,
+)
 
 
 def context() -> AuthContext:
@@ -73,11 +77,11 @@ async def test_side_effect_executes_once_only_after_bound_approval() -> None:
 
     async def handler(
         capability_request: CapabilityRequest,
-        scopes: frozenset[str],
+        execution_context: CapabilityExecutionContext,
     ) -> CapabilityResult:
         nonlocal calls
         assert capability_request.input["targetResource"] == "change:refund-service"
-        assert scopes == frozenset({"scope-public"})
+        assert execution_context.scopes == frozenset({"scope-public"})
         calls += 1
         return CapabilityResult(status="SUCCEEDED")
 

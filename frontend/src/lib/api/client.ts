@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { components } from "./schema";
 
 export type AgentRun = components["schemas"]["AgentRun"];
+export type RunStepSummary = components["schemas"]["RunStepSummary"];
 export type Citation = components["schemas"]["Citation"];
 export type AgentMode = components["schemas"]["CreateAgentRunRequest"]["mode"];
 export type Document = components["schemas"]["Document"];
@@ -12,7 +13,23 @@ export type MetadataReviewResult = components["schemas"]["MetadataReviewResult"]
 export type ApprovalRequest = components["schemas"]["ApprovalRequest"];
 export type EvaluationRun = components["schemas"]["EvaluationRun"];
 export type GraphConflictList = components["schemas"]["GraphConflictList"];
+export type GraphSnapshot = components["schemas"]["GraphSnapshot"];
+export type GraphNode = components["schemas"]["GraphNode"];
+export type GraphEdge = components["schemas"]["GraphEdge"];
+export type GraphEntityDetail = components["schemas"]["GraphEntityDetail"];
+export type GraphEntitySearchResult = components["schemas"]["GraphEntitySearchResult"];
+export type GraphPolicy = components["schemas"]["GraphPolicy"];
+export type GraphPolicyUpdate = components["schemas"]["GraphPolicyUpdate"];
+export type GraphPath = components["schemas"]["GraphPath"];
 export type GraphEntityMergeResult = components["schemas"]["GraphEntityMergeResult"];
+export type AgentRunList = components["schemas"]["AgentRunList"];
+export type DocumentList = components["schemas"]["DocumentList"];
+export type DocumentVersion = components["schemas"]["DocumentVersion"];
+export type DocumentVersionList = components["schemas"]["DocumentVersionList"];
+export type RuntimeCapabilities = components["schemas"]["RuntimeCapabilities"];
+export type RagPolicy = components["schemas"]["RagPolicy"];
+export type RagPolicyUpdate = components["schemas"]["RagPolicyUpdate"];
+export type RagStrategyCatalog = components["schemas"]["RagStrategyCatalog"];
 
 const modeSchema = z.enum(["AUTO", "SIMPLE", "MULTI_SOURCE", "GRAPH"]);
 const createRunInputSchema = z
@@ -63,6 +80,10 @@ async function platformRequest<T>(path: string, init: RequestInit = {}): Promise
   return (await response.json()) as T;
 }
 
+export function readRuntimeCapabilities(): Promise<RuntimeCapabilities> {
+  return platformRequest("capabilities");
+}
+
 export async function createAgentRun(query: string, mode: AgentMode = "AUTO"): Promise<AgentRun> {
   const response = await fetch("/api/agent-runs", {
     method: "POST",
@@ -88,8 +109,16 @@ export async function readAgentRun(runId: string): Promise<AgentRun> {
   return (await response.json()) as AgentRun;
 }
 
+export function listAgentRuns(limit = 50): Promise<AgentRunList> {
+  return platformRequest(`agent-runs?limit=${encodeURIComponent(String(limit))}`);
+}
+
 export function uploadDocument(formData: FormData): Promise<DocumentUploadResult> {
   return platformRequest("documents", { method: "POST", body: formData });
+}
+
+export function listDocuments(limit = 100): Promise<DocumentList> {
+  return platformRequest(`documents?limit=${encodeURIComponent(String(limit))}`);
 }
 
 export function readDocument(documentId: string): Promise<Document> {
@@ -109,6 +138,10 @@ export function uploadDocumentVersion(
     headers: { "Idempotency-Key": crypto.randomUUID() },
     body: formData,
   });
+}
+
+export function listDocumentVersions(documentId: string): Promise<DocumentVersionList> {
+  return platformRequest(`documents/${encodeURIComponent(documentId)}/versions`);
 }
 
 export function readIngestionJob(jobId: string): Promise<IngestionJob> {
@@ -166,6 +199,87 @@ export function readEvaluationRun(runId: string): Promise<EvaluationRun> {
 
 export function readGraphConflicts(): Promise<GraphConflictList> {
   return platformRequest("graph/conflicts");
+}
+
+export interface GraphQuery {
+  query?: string;
+  entityTypes?: string[];
+  relationTypes?: string[];
+  minimumConfidence?: number;
+  limit?: number;
+}
+
+function graphSearchParams(input: GraphQuery = {}) {
+  const parameters = new URLSearchParams();
+  parameters.set("limit", String(input.limit ?? 200));
+  if (input.query?.trim()) parameters.set("query", input.query.trim());
+  for (const value of input.entityTypes ?? []) parameters.append("entityType", value);
+  for (const value of input.relationTypes ?? []) parameters.append("relationType", value);
+  if (input.minimumConfidence !== undefined) {
+    parameters.set("minimumConfidence", String(input.minimumConfidence));
+  }
+  return parameters;
+}
+
+export function readGraphSnapshot(input: number | GraphQuery = 200): Promise<GraphSnapshot> {
+  const parameters = graphSearchParams(typeof input === "number" ? { limit: input } : input);
+  return platformRequest(`graph?${parameters.toString()}`);
+}
+
+export function searchGraphEntities(
+  query: string,
+  entityTypes: string[] = [],
+  limit = 20,
+): Promise<GraphEntitySearchResult> {
+  const parameters = graphSearchParams({ query, entityTypes, limit });
+  return platformRequest(`graph/entities?${parameters.toString()}`);
+}
+
+export function readGraphEntity(entityId: string): Promise<GraphEntityDetail> {
+  return platformRequest(`graph/entities/${encodeURIComponent(entityId)}`);
+}
+
+export function readGraphNeighbors(
+  entityId: string,
+  input: GraphQuery & { depth?: 1 | 2 | 3 } = {},
+): Promise<GraphSnapshot> {
+  const parameters = graphSearchParams({ ...input, limit: input.limit ?? 80 });
+  parameters.set("depth", String(input.depth ?? 1));
+  return platformRequest(
+    `graph/entities/${encodeURIComponent(entityId)}/neighbors?${parameters.toString()}`,
+  );
+}
+
+export function readGraphRelation(relationId: string): Promise<GraphEdge> {
+  return platformRequest(`graph/relations/${encodeURIComponent(relationId)}`);
+}
+
+export function readGraphPolicy(): Promise<GraphPolicy> {
+  return platformRequest("graph/policy");
+}
+
+export function updateGraphPolicy(input: GraphPolicyUpdate): Promise<GraphPolicy> {
+  return platformRequest("graph/policy", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function readRagStrategies(): Promise<RagStrategyCatalog> {
+  return platformRequest("rag/strategies");
+}
+
+export function readRagPolicy(): Promise<RagPolicy> {
+  return platformRequest("rag/policy");
+}
+
+export function updateRagPolicy(input: RagPolicyUpdate): Promise<RagPolicy> {
+  return platformRequest("rag/policy", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }
 
 export function mergeGraphEntity(

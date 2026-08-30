@@ -1,53 +1,102 @@
 "use client";
 
-import { useMutation,useQuery } from "@tanstack/react-query";
-import { CircleAlert,GitMerge,LoaderCircle,Maximize2,Network,RefreshCw,Search,ShieldAlert,ZoomIn,ZoomOut } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CircleAlert, LoaderCircle, RefreshCw, Settings2 } from "lucide-react";
 import { useState } from "react";
+
+import { GraphExplorer } from "@/components/graph/graph-explorer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OverlayPanel } from "@/components/ui/overlay-panel";
-import { mergeGraphEntity,readGraphConflicts } from "@/lib/api/client";
+import { readGraphConflicts, readGraphPolicy, updateGraphPolicy, type GraphPolicy } from "@/lib/api/client";
 
-const graphNodes=[{x:330,y:270,label:"退款政策",primary:true},{x:145,y:150,label:"申请材料"},{x:535,y:135,label:"财务制度"},{x:590,y:340,label:"审批流程"},{x:155,y:395,label:"客户服务"},{x:350,y:475,label:"时效标准"}];
-const lines=[[0,1],[0,2],[0,3],[0,4],[0,5],[1,4],[3,5]];
+type EntityType = GraphPolicy["availableEntityTypes"][number];
+const ENTITY_DETAILS: Record<EntityType, { label: string; description: string }> = {
+  SYSTEM: { label: "系统", description: "业务系统、平台或应用" },
+  PRODUCT: { label: "产品", description: "可交付的软件或业务产品" },
+  SERVICE: { label: "服务", description: "业务服务或后台服务" },
+  API: { label: "接口", description: "API、端点或协议接口" },
+  ERROR_CODE: { label: "错误码", description: "可定位问题的错误编号" },
+  ORGANIZATION: { label: "组织", description: "公司、机构或外部组织" },
+  ORG_UNIT: { label: "组织单元", description: "部门、团队或业务单元" },
+  DATABASE: { label: "数据库", description: "数据库或数据存储实例" },
+  QUEUE: { label: "消息队列", description: "队列、主题或事件通道" },
+  TECH_COMPONENT: { label: "技术组件", description: "框架、中间件或基础组件" },
+};
 
-export function GraphGovernance(){
- const conflicts=useQuery({queryKey:["graph-conflicts"],queryFn:readGraphConflicts});
- const [sourceId,setSourceId]=useState(""),[targetId,setTargetId]=useState(""),[confirmed,setConfirmed]=useState(false),[entityOpen,setEntityOpen]=useState(false),[mergeOpen,setMergeOpen]=useState(false);
- const merge=useMutation({mutationFn:()=>mergeGraphEntity(sourceId.trim(),targetId.trim(),confirmed),onSuccess:()=>conflicts.refetch()});
- function chooseConflict(id:string){setSourceId(id);setTargetId("");setConfirmed(false);setMergeOpen(true)}
- return <div>
-  <header className="page-topbar"><div><p className="mb-1 text-[10px] text-[#858995]">企业知识库</p><h1 className="page-title">知识图谱</h1></div><div className="flex gap-2"><Button variant="secondary" size="sm" onClick={()=>conflicts.refetch()}><RefreshCw className="size-3.5"/>刷新冲突</Button><Badge className="bg-[#e8f5ee] text-[#287552]">投影可重建</Badge></div></header>
-  <div className="page-content">
-   <div className="flex flex-wrap items-end justify-between gap-5"><div><p className="eyebrow">Knowledge graph</p><h2 className="heading-xl">探索实体与关系</h2><p className="mt-2 max-w-2xl text-xs leading-6 text-[#858995]">关系必须保留来源证据和知识范围；图谱浏览接口尚未接入，治理冲突使用真实 API。</p></div><div className="flex h-9 items-center gap-2 rounded-[9px] border border-[#deded9] bg-white px-3"><Search className="size-3.5 text-[#858995]"/><input className="w-48 border-0 bg-transparent text-[11px] outline-none" placeholder="搜索实体、别名或关系"/></div></div>
-   <section className="panel mt-7 overflow-hidden">
-    <div className="grid min-h-[620px] grid-cols-[minmax(0,1fr)_300px] max-[1000px]:grid-cols-1">
-     <div className="relative min-h-[620px] bg-[radial-gradient(circle_at_center,#fff_0,#fafaf8_72%)]">
-      <div className="absolute left-4 top-4 z-10 flex gap-1 rounded-[10px] border border-[#deded9] bg-white p-1"><button className="grid size-8 place-items-center rounded-lg hover:bg-[#f0f0ec]" aria-label="放大"><ZoomIn className="size-3.5"/></button><button className="grid size-8 place-items-center rounded-lg hover:bg-[#f0f0ec]" aria-label="缩小"><ZoomOut className="size-3.5"/></button><button className="grid size-8 place-items-center rounded-lg hover:bg-[#f0f0ec]" aria-label="适应画布"><Maximize2 className="size-3.5"/></button></div>
-      <svg viewBox="0 0 720 620" className="h-[620px] w-full" aria-label="知识图谱预览">
-       {lines.map(([a,b],i)=><line key={i} x1={graphNodes[a].x} y1={graphNodes[a].y} x2={graphNodes[b].x} y2={graphNodes[b].y} stroke="#c9cbd8" strokeWidth="1.5"/>)}
-       {graphNodes.map((node,i)=><g key={node.label} onClick={()=>setEntityOpen(true)} className="cursor-pointer"><circle cx={node.x} cy={node.y} r={node.primary?45:37} fill={node.primary?"#4d55ca":"#fff"} stroke={node.primary?"#4d55ca":"#aeb2c8"} strokeWidth="2"/><text x={node.x} y={node.y+4} textAnchor="middle" fill={node.primary?"#fff":"#484b56"} fontSize="11">{node.label}</text>{i===0?<circle cx={node.x+34} cy={node.y-34} r="8" fill="#287552" stroke="#fff" strokeWidth="3"/>:null}</g>)}
-      </svg>
-      <p className="absolute bottom-4 left-4 rounded-lg bg-white/90 px-3 py-2 text-[10px] text-[#858995] shadow-sm">画布为界面占位 · 图谱浏览接口待接入</p>
-     </div>
-     <aside className="border-l border-[#deded9] bg-[#fafaf8] p-[18px] max-[1000px]:border-l-0 max-[1000px]:border-t">
-      <div className="flex items-center justify-between"><h3 className="text-xs font-semibold text-[#20212a]">关系冲突</h3>{conflicts.isFetching?<LoaderCircle className="size-3.5 animate-spin text-[#4d55ca]"/>:<Badge className="bg-[#fbf2df] text-[#8a5a17]">{conflicts.data?.relations.length??0} 条</Badge>}</div>
-      {conflicts.isError?<p role="alert" className="mt-4 rounded-lg bg-[#faeaea] p-3 text-[10px] leading-5 text-[#9b4040]">{conflicts.error.message}</p>:null}
-      <div className="mt-4 grid gap-2">{conflicts.data?.relations.map(id=><button key={id} onClick={()=>chooseConflict(id)} className="rounded-xl border border-[#deded9] bg-white p-3 text-left hover:border-[#bfc1d6]"><span className="flex items-center justify-between text-[11px] font-semibold text-[#20212a]">关系冲突<CircleAlert className="size-3.5 text-[#8a5a17]"/></span><span className="mt-2 block break-all font-mono text-[9px] text-[#858995]">{id}</span><span className="mt-2 block text-[10px] text-[#4d55ca]">打开治理详情 →</span></button>)}</div>
-      {conflicts.data&&!conflicts.data.relations.length?<div className="empty-state min-h-[240px]"><div><Network className="mx-auto size-8 text-[#b4b6bd]"/><p className="mt-3 text-[11px]">当前没有待治理冲突</p></div></div>:null}
-      {!conflicts.data&&!conflicts.isFetching?<p className="mt-6 text-[10px] leading-5 text-[#858995]">冲突接口返回后会在此显示需要人工治理的关系或实体。</p>:null}
-     </aside>
+export function GraphGovernance() {
+  const queryClient = useQueryClient();
+  const conflicts = useQuery({ queryKey: ["graph-conflicts"], queryFn: readGraphConflicts });
+  const policy = useQuery({ queryKey: ["graph-policy"], queryFn: readGraphPolicy });
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [selectedTypes, setSelectedTypes] = useState<EntityType[]>([]);
+
+  const savePolicy = useMutation({
+    mutationFn: () => {
+      if (!policy.data) throw new Error("图谱策略尚未加载完成。");
+      return updateGraphPolicy({
+        allowedEntityTypes: selectedTypes,
+        allowedRelationTypes: policy.data.allowedRelationTypes,
+        minimumEntityConfidence: policy.data.minimumEntityConfidence,
+        minimumRelationConfidence: policy.data.minimumRelationConfidence,
+        seedLimit: policy.data.seedLimit,
+        maxHops: policy.data.maxHops,
+        maxNodes: policy.data.maxNodes,
+        maxPaths: policy.data.maxPaths,
+        maxGraphChunks: policy.data.maxGraphChunks,
+        ...(policy.data.allowedAliases ? { allowedAliases: policy.data.allowedAliases } : {}),
+      });
+    },
+    onSuccess: (nextPolicy) => {
+      queryClient.setQueryData(["graph-policy"], nextPolicy);
+      void queryClient.invalidateQueries({ queryKey: ["graph-scene"] });
+      setPolicyOpen(false);
+    },
+  });
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["graph-scene"] });
+    void conflicts.refetch();
+    void policy.refetch();
+  };
+  const openPolicy = () => {
+    if (!policy.data) return;
+    setSelectedTypes([...policy.data.allowedEntityTypes]);
+    savePolicy.reset();
+    setPolicyOpen(true);
+  };
+  const toggleEntityType = (entityType: EntityType) => {
+    setSelectedTypes((current) => current.includes(entityType) ? current.filter((value) => value !== entityType) : [...current, entityType]);
+  };
+  const loading = conflicts.isFetching || policy.isFetching;
+  const availableTypes = policy.data?.availableEntityTypes ?? policy.data?.allowedEntityTypes ?? [];
+
+  return <div>
+    <header className="page-topbar">
+      <div><p className="mb-1 text-[10px] text-[#858995]">企业知识库</p><h1 className="page-title">知识图谱</h1></div>
+      <div className="flex gap-2"><Button variant="secondary" size="sm" onClick={refresh}><RefreshCw className="size-3.5"/>刷新图谱</Button><Badge className="bg-[#e8f5ee] text-[#287552]">真实投影</Badge></div>
+    </header>
+    <div className="page-content">
+      <div><p className="eyebrow">Knowledge graph</p><h2 className="heading-xl">跨文档实体关系</h2><p className="mt-2 max-w-2xl text-xs leading-6 text-[#858995]">搜索进入、局部探索、按需展开。图谱仅发现关联并扩大召回，最终回答与引用仍回溯原始文档。</p></div>
+
+      {policy.data ? <GraphExplorer policy={policy.data}/> : null}
+
+      <section className="panel mt-7">
+        <div className="panel-head"><div><h3 className="panel-title">实体保留策略</h3><p className="mt-1 text-[10px] text-[#858995]">决定哪些业务实体可以进入辅助检索图谱</p></div><div className="flex items-center gap-2">{policy.data ? <Badge>策略 v{policy.data.version}</Badge> : null}{policy.data?.canManage ? <Button variant="secondary" size="sm" onClick={openPolicy}><Settings2 className="size-3.5"/>配置实体</Button> : null}</div></div>
+        {policy.isLoading ? <div className="flex items-center gap-2 p-5 text-[11px] text-[#858995]"><LoaderCircle className="size-4 animate-spin"/>正在读取当前策略…</div> : null}
+        {policy.isError ? <div className="p-5 text-xs text-[#9b4040]"><p>{policy.error.message}</p><Button className="mt-3" onClick={() => policy.refetch()}>重试</Button></div> : null}
+        {policy.data ? <div className="p-5"><div className="flex flex-wrap gap-2">{policy.data.allowedEntityTypes.map((entityType) => <span key={entityType} className="rounded-lg bg-white px-3 py-2 text-[10px]" title={ENTITY_DETAILS[entityType].description}><span className="font-semibold">{ENTITY_DETAILS[entityType].label}</span><span className="ml-1.5 font-mono text-[#858995]">{entityType}</span></span>)}</div><p className="mt-4 text-[10px] leading-5 text-[#858995]">当前启用 {policy.data.allowedEntityTypes.length} / {availableTypes.length} 类实体。保存新策略后会立即用于图谱浏览、检索和后续文档抽取。{!policy.data.canManage ? "当前账号为只读权限。" : ""}</p></div> : null}
+      </section>
+
+      <section className="panel mt-5"><div className="panel-head"><div><h3 className="panel-title">关系冲突</h3><p className="mt-1 text-[10px] text-[#858995]">歧义关系不会被静默确认为事实</p></div><Badge className="bg-[#fbf2df] text-[#8a5a17]">{conflicts.data?.relations.length ?? 0} 条</Badge></div>{conflicts.data?.relations.length ? <div className="grid grid-cols-3 gap-3 p-5 max-[900px]:grid-cols-1">{conflicts.data.relations.map((id) => <div key={id} className="rounded-xl bg-white p-4 text-[10px]"><span className="flex items-center justify-between font-semibold text-[#20212a]">关系冲突<CircleAlert className="size-3.5 text-[#8a5a17]"/></span><span className="mt-2 block break-all font-mono text-[#858995]">{id}</span></div>)}</div> : <p className="p-5 text-[10px] text-[#858995]">当前没有待治理冲突。</p>}</section>
+      {loading ? <span className="sr-only">正在刷新知识图谱</span> : null}
     </div>
-   </section>
-  </div>
-  <OverlayPanel open={entityOpen} onOpenChange={setEntityOpen} title="退款政策" description="规范实体 · Policy" mode="drawer">
-   <div className="flex items-center gap-3"><span className="grid size-12 place-items-center rounded-full bg-[#4d55ca] text-white"><Network className="size-5"/></span><div><h3 className="text-sm font-semibold text-[#20212a]">退款政策</h3><p className="mt-1 text-[10px] text-[#858995]">6 条关系 · 12 个来源片段</p></div></div>
-   <div className="mt-7"><h4 className="text-xs font-semibold text-[#20212a]">实体来源</h4><div className="mt-3 rounded-xl border border-[#deded9] p-4"><p className="text-[11px] font-semibold text-[#20212a]">《企业退款管理办法》</p><p className="mt-1 text-[10px] text-[#858995]">第 2 章 · 第 3 段 · 当前版本</p><p className="mt-3 text-[11px] leading-6 text-[#656975]">该实体由受控抽取流程识别，规范来源与关系证据需由后端图谱浏览接口提供。</p></div></div>
-  </OverlayPanel>
-  <OverlayPanel open={mergeOpen} onOpenChange={setMergeOpen} title="合并重复实体" description="合并会改变后续图投影，原始 mention 与证据仍会保留。" footer={<><Button variant="secondary" onClick={()=>setMergeOpen(false)}>取消</Button><Button onClick={()=>merge.mutate()} disabled={!sourceId.trim()||!targetId.trim()||!confirmed||merge.isPending}>{merge.isPending?<LoaderCircle className="size-4 animate-spin"/>:<GitMerge className="size-4"/>}执行合并</Button></>}>
-   <div className="grid grid-cols-2 gap-5"><label className="grid gap-2 text-xs font-semibold text-[#535761]">来源实体 ID<input className="field font-mono text-[11px]" value={sourceId} onChange={e=>setSourceId(e.target.value)}/></label><label className="grid gap-2 text-xs font-semibold text-[#535761]">目标规范实体 ID<input aria-label="目标规范实体 ID" className="field font-mono text-[11px]" value={targetId} onChange={e=>setTargetId(e.target.value)}/></label></div>
-   <label className="mt-5 flex items-start gap-3 rounded-xl bg-[#fbf2df] p-4 text-xs text-[#8a5a17]"><input type="checkbox" className="mt-0.5" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/><span><strong className="flex items-center gap-2"><ShieldAlert className="size-4"/>确认治理影响</strong><span className="mt-1 block text-[10px] leading-5">我已核对两个实体及其来源，确认由目标实体承担规范身份。</span></span></label>
-   {merge.data?<p className="mt-4 rounded-xl bg-[#e8f5ee] p-4 text-xs text-[#287552]">实体 {merge.data.id} 已合并至 {merge.data.mergedIntoId}。</p>:null}{merge.error?<p role="alert" className="mt-4 rounded-xl bg-[#faeaea] p-4 text-xs text-[#9b4040]">{merge.error.message}</p>:null}
-  </OverlayPanel>
- </div>;
+
+    <OverlayPanel open={policyOpen} onOpenChange={setPolicyOpen} title="配置实体保留策略" description="仅勾选对业务检索有价值、需要进入知识图谱的实体类型。" footer={<><Button variant="secondary" onClick={() => setPolicyOpen(false)}>取消</Button><Button onClick={() => savePolicy.mutate()} disabled={!selectedTypes.length || savePolicy.isPending}>{savePolicy.isPending ? <LoaderCircle className="size-4 animate-spin"/> : null}保存新版本</Button></>}>
+      <div className="grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">{availableTypes.map((entityType) => { const checked = selectedTypes.includes(entityType); return <label key={entityType} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${checked ? "border-[#777edc] bg-[#f2f2ff]" : "border-[#deded9] bg-white hover:bg-[#fafaf8]"}`}><input type="checkbox" className="mt-0.5 size-4 accent-[#4d55ca]" checked={checked} onChange={() => toggleEntityType(entityType)}/><span><span className="block text-xs font-semibold text-[#20212a]">{ENTITY_DETAILS[entityType].label}</span><span className="mt-1 block text-[10px] leading-5 text-[#858995]">{ENTITY_DETAILS[entityType].description}</span><span className="mt-1 block font-mono text-[9px] text-[#777b88]">{entityType}</span></span></label>; })}</div>
+      {!selectedTypes.length ? <p className="mt-4 text-[11px] text-[#9b4040]">至少保留一种实体类型。</p> : null}
+      {savePolicy.isError ? <p className="mt-4 text-[11px] text-[#9b4040]">{savePolicy.error.message}</p> : null}
+      <p className="mt-5 rounded-lg bg-[#f5f5f2] p-3 text-[10px] leading-5 text-[#656975]">该操作会创建新的策略版本。已有实体和关系不会被物理删除；浏览、检索和后续文档抽取将使用新策略。</p>
+    </OverlayPanel>
+  </div>;
 }

@@ -28,12 +28,16 @@ class StubChatCompletion:
                     {
                         "id": "0",
                         "label": "Product",
-                        "properties": {"name": "AtlasMind"},
+                        "properties": {"name": "AtlasMind", "confidence": 0.99},
                     },
                     {
                         "id": "1",
                         "label": "Database",
-                        "properties": {"name": "PostgreSQL", "aliases": ["Postgres"]},
+                        "properties": {
+                            "name": "PostgreSQL",
+                            "aliases": ["Postgres"],
+                            "confidence": 0.98,
+                        },
                     },
                 ],
                 "relationships": [
@@ -48,6 +52,18 @@ class StubChatCompletion:
         )
 
 
+class InvalidJSONChatCompletion:
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        system_instruction: str | None = None,
+        max_tokens: int = 1800,
+    ) -> str:
+        del prompt, system_instruction, max_tokens
+        return "the model did not return JSON"
+
+
 @pytest.mark.asyncio
 async def test_official_extractor_maps_to_atlasmind_graph_contract() -> None:
     chat = StubChatCompletion()
@@ -60,6 +76,7 @@ async def test_official_extractor_maps_to_atlasmind_graph_contract() -> None:
 
     assert [entity.name for entity in result.entities] == ["AtlasMind", "PostgreSQL"]
     assert result.entities[1].aliases == ("Postgres",)
+    assert result.entities[1].confidence == 0.98
     assert result.relations[0].source == "AtlasMind"
     assert result.relations[0].target == "PostgreSQL"
     assert result.relations[0].relation_type == "USES"
@@ -78,3 +95,16 @@ async def test_official_extractor_skips_model_call_for_empty_content() -> None:
     assert result.entities == ()
     assert result.relations == ()
     assert chat.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_graph_json_degrades_to_empty_projection() -> None:
+    extractor = Neo4jGraphRAGExtractor(InvalidJSONChatCompletion(), model_name="test-chat")
+
+    result = await extractor.extract_graph(
+        "AtlasMind uses PostgreSQL.",
+        locator="paragraph:1",
+    )
+
+    assert result.entities == ()
+    assert result.relations == ()

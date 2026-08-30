@@ -118,3 +118,103 @@ async def test_answer_rejects_citations_not_present_in_supplied_evidence() -> No
             graph_facts=(),
         )
     await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_emits_deltas_stops_at_done_and_validates_citations() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        chunks = [
+            {"choices": [{"delta": {"content": "AtlasMind 使用 "}}]},
+            {"choices": [{"delta": {"content": "PostgreSQL [SOURCE chunk-1]"}}]},
+        ]
+        body = "".join(f"data: {json.dumps(item)}\n\n" for item in chunks)
+        body += "data: [DONE]\n\n"
+        return httpx.Response(200, content=body.encode())
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://models.example.test/v1",
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://models.example.test/v1",
+        api_key="test-secret",
+        chat_model="chat-model",
+        embedding_model="embedding-model",
+        http_client=http,
+    )
+    deltas: list[str] = []
+
+    async def on_text(delta: str) -> None:
+        deltas.append(delta)
+
+    answer = await client.stream_answer(
+        "What does AtlasMind use?",
+        {"chunk-1": "AtlasMind uses PostgreSQL."},
+        on_text,
+    )
+
+    assert deltas == ["AtlasMind 使用 ", "PostgreSQL [SOURCE chunk-1]"]
+    assert answer.citation_ids == ("chunk-1",)
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_rejects_malformed_sse_payload() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"data: {not-json}\n\ndata: [DONE]\n\n")
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://models.example.test/v1",
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://models.example.test/v1",
+        api_key="test-secret",
+        chat_model="chat-model",
+        embedding_model="embedding-model",
+        http_client=http,
+    )
+
+    with pytest.raises(ValueError, match="MODEL_STREAM_RESPONSE_INVALID"):
+        await client.stream_answer(
+            "Question",
+            {"chunk-1": "Evidence"},
+            lambda _delta: _completed(),
+        )
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_rejects_citation_outside_evidence_allowlist() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        payload = {
+            "choices": [
+                {"delta": {"content": "Unsupported [SOURCE unknown-chunk]"}}
+            ]
+        }
+        body = f"data: {json.dumps(payload)}\n\ndata: [DONE]\n\n"
+        return httpx.Response(200, content=body.encode())
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://models.example.test/v1",
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://models.example.test/v1",
+        api_key="test-secret",
+        chat_model="chat-model",
+        embedding_model="embedding-model",
+        http_client=http,
+    )
+
+    with pytest.raises(ValueError, match="MODEL_CITATION_OUTSIDE_EVIDENCE"):
+        await client.stream_answer(
+            "Question",
+            {"chunk-1": "Evidence"},
+            lambda _delta: _completed(),
+        )
+    await http.aclose()
+
+
+async def _completed() -> None:
+    return None

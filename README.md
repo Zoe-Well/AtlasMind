@@ -69,7 +69,7 @@ ATLASMIND_CHAT_BASE_URL=https://api.deepseek.com
 ATLASMIND_CHAT_API_KEY=你的_DeepSeek_API_Key
 ATLASMIND_CHAT_MODEL=deepseek-chat
 
-ATLASMIND_EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
+ATLASMIND_EMBEDDING_BASE_URL=http://host.docker.internal:8001/v1
 ATLASMIND_EMBEDDING_API_KEY=ollama-local
 ATLASMIND_EMBEDDING_MODEL=bge-m3
 ~~~
@@ -152,6 +152,14 @@ GitHub Actions 使用相同入口分别执行完整后端、前端和关键 Play
 
 真实存储端到端测试需要先启动 PostgreSQL、MinIO 和 Neo4j，并设置 <code>ATLASMIND_RUN_REAL_MVP=1</code>。
 
+已启动完整 Compose 环境并配置模型端点后，可执行一键真实知识库烟雾测试：
+
+~~~bash
+docker compose exec -T api python -m atlasmind.smoke
+~~~
+
+命令输出机器可读 JSON，并验证原文件、分块与向量、图谱投影、真实问答与引用、AgentRun/trace/审计关联、运行时重建检索和撤销过滤。只有输出中的 <code>status</code> 为 <code>passed</code> 才表示本次真实链路通过。
+
 ## Playwright 与自动截图
 
 首次使用时安装 Chromium：
@@ -188,5 +196,6 @@ pnpm screenshot:ui
 
 - [项目实现状态](docs/PROJECT_STATUS.md)：当前已经实现、验证和仍受限制的能力。
 - [下一步建议](docs/NEXT_STEPS.md)：按优先级排列的后续工作与验收出口。
+- [Windows 重启恢复手册](docs/WINDOWS_RESTART_RUNBOOK.md)：重启后需要恢复的服务、启动顺序、命令和验证出口。
 
 代码变更影响能力、接口、部署、测试结论或优先级时，应按照 `AGENTS.md` 同步维护这两份文档。

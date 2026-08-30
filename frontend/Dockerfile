@@ -4,7 +4,8 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 WORKDIR /app
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN CI=true pnpm install --frozen-lockfile \
+    && node -e "require.resolve('tailwindcss'); require.resolve('@ag-ui/core')"
 
 FROM node:22-alpine AS development
 ENV PNPM_HOME=/pnpm
@@ -16,6 +17,8 @@ RUN corepack enable
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ ./
+RUN CI=true pnpm install --frozen-lockfile \
+    && node -e "require.resolve('tailwindcss'); require.resolve('@ag-ui/core')"
 EXPOSE 3000
 CMD ["pnpm", "dev"]
 
@@ -26,6 +29,8 @@ RUN corepack enable
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ ./
+RUN CI=true pnpm install --frozen-lockfile \
+    && node -e "require.resolve('tailwindcss'); require.resolve('@ag-ui/core')"
 RUN pnpm build
 
 FROM node:22-alpine AS runner

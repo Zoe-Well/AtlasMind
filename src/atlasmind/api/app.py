@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -9,13 +10,21 @@ from datetime import timedelta
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, Header, Request, UploadFile, status
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, File, Form, Header, Query, Request, UploadFile, status
+from fastapi.responses import JSONResponse, StreamingResponse
+from opentelemetry import trace
 from pydantic import BaseModel, ConfigDict, Field
 
+from atlasmind.agent.decisions import AgentMode
 from atlasmind.api.middleware.auth_context import AuthContext, CorrelationIdMiddleware
 from atlasmind.domain.common import AuthenticationRequired, DomainError, utc_now
+from atlasmind.graph.policy import DEFAULT_ENTITY_TYPES
 from atlasmind.identity.models import Action
+from atlasmind.observability.telemetry import configure_telemetry
+from atlasmind.retrieval.strategy_policy import (
+    RetrievalRuntimeBudget,
+    StrategyConfiguration,
+)
 from atlasmind.runtime import (
     LOCAL_PRINCIPAL_ID,
     LOCAL_SCOPE_ID,
@@ -28,7 +37,33 @@ from atlasmind.settings import AuthMode, Settings, load_settings
 class CreateRun(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, max_length=16_000)
-    mode: str = "AUTO"
+    mode: AgentMode = "AUTO"
+
+
+class UpdateGraphPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    allowed_entity_types: set[str] = Field(alias="allowedEntityTypes", min_length=1)
+    allowed_relation_types: set[str] = Field(alias="allowedRelationTypes", min_length=1)
+    minimum_entity_confidence: float = Field(
+        default=0.60, alias="minimumEntityConfidence", ge=0, le=1
+    )
+    minimum_relation_confidence: float = Field(
+        default=0.70, alias="minimumRelationConfidence", ge=0, le=1
+    )
+    seed_limit: int = Field(default=8, alias="seedLimit", ge=1, le=30)
+    max_hops: int = Field(default=2, alias="maxHops", ge=1, le=2)
+    max_nodes: int = Field(default=40, alias="maxNodes", ge=2, le=200)
+    max_paths: int = Field(default=24, alias="maxPaths", ge=1, le=100)
+    max_graph_chunks: int = Field(default=24, alias="maxGraphChunks", ge=1, le=100)
+    allowed_aliases: dict[str, str] = Field(default_factory=dict, alias="allowedAliases")
+
+
+class UpdateRagPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    strategies: dict[str, StrategyConfiguration]
+    budget: RetrievalRuntimeBudget = RetrievalRuntimeBudget()
 
 
 async def runtime_auth_context(request: Request) -> AuthContext:
@@ -39,7 +74,9 @@ async def runtime_auth_context(request: Request) -> AuthContext:
     now = utc_now()
     return AuthContext(
         principal_id=LOCAL_PRINCIPAL_ID,
-        role_codes=frozenset({"knowledge-admin", "employee"}),
+        role_codes=frozenset(
+            {"local-super-admin", "knowledge-admin", "tool-approver", "auditor", "employee"}
+        ),
         scope_ids=frozenset({LOCAL_SCOPE_ID}),
         allowed_actions=frozenset(
             {Action.DISCOVER, Action.READ, Action.CITE, Action.MANAGE, Action.AUDIT}
@@ -96,6 +133,13 @@ def create_app(
 ) -> FastAPI:
     configured = settings or load_settings()
     dependencies = runtime or create_runtime(configured)
+    configure_telemetry(
+        "atlasmind-api",
+        str(configured.otel_exporter_otlp_endpoint)
+        if configured.otel_exporter_otlp_endpoint
+        else None,
+    )
+    tracer = trace.get_tracer("atlasmind.api")
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -129,6 +173,21 @@ def create_app(
     async def live() -> dict[str, str]:
         return {"status": "ok", "dataMode": "persistent"}
 
+    @api.get("/v1/capabilities")
+    async def capabilities(_context: AuthContextDependency) -> dict[str, object]:
+        return {
+            "dataMode": "persistent",
+            "localSuperAdmin": configured.auth_mode is AuthMode.LOCAL,
+            "features": {
+                "knowledge": True,
+                "agentRuns": True,
+                "graphConflicts": True,
+                "graphBrowse": True,
+                "approvals": False,
+                "evaluations": False,
+            },
+        }
+
     @api.post("/v1/documents", status_code=status.HTTP_202_ACCEPTED)
     async def upload_document(
         context: AuthContextDependency,
@@ -152,7 +211,15 @@ def create_app(
             metadata=values,
             actor_id=context.principal_id,
             idempotency_key=idempotency_key or str(uuid4()),
+            correlation_id=context.correlation_id,
         )
+
+    @api.get("/v1/documents")
+    async def list_documents(
+        context: AuthContextDependency,
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.list_documents(context.scope_ids, limit=limit)
 
     @api.get("/v1/documents/{document_id}")
     async def read_document(
@@ -166,7 +233,44 @@ def create_app(
         document_id: str,
         context: AuthContextDependency,
     ) -> dict[str, object]:
-        return await dependencies.knowledge.revoke_document(document_id, context.scope_ids)
+        return await dependencies.knowledge.revoke_document(
+            document_id,
+            context.scope_ids,
+            actor_id=context.principal_id,
+            correlation_id=context.correlation_id,
+        )
+
+    @api.get("/v1/documents/{document_id}/versions")
+    async def list_document_versions(
+        document_id: str,
+        context: AuthContextDependency,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.list_document_versions(document_id, context.scope_ids)
+
+    @api.post("/v1/documents/{document_id}/versions", status_code=status.HTTP_202_ACCEPTED)
+    async def upload_document_version(
+        document_id: str,
+        context: AuthContextDependency,
+        file: Annotated[UploadFile, File()],
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1)],
+        version_label: Annotated[str | None, Form(alias="versionLabel", max_length=100)] = None,
+        metadata: Annotated[str | None, Form()] = None,
+    ) -> dict[str, object]:
+        values = json.loads(metadata or "{}")
+        if not isinstance(values, dict):
+            raise ValueError("metadata must be a JSON object")
+        return await dependencies.knowledge.add_version(
+            document_id=document_id,
+            file_name=file.filename or "upload.bin",
+            media_type=file.content_type or "application/octet-stream",
+            content=await file.read(),
+            scope_ids=context.scope_ids,
+            metadata=values,
+            actor_id=context.principal_id,
+            idempotency_key=idempotency_key,
+            correlation_id=context.correlation_id,
+            version_label=version_label,
+        )
 
     @api.get("/v1/ingestion-jobs/{job_id}")
     async def read_job(
@@ -187,14 +291,25 @@ def create_app(
         body: CreateRun,
         context: AuthContextDependency,
     ) -> dict[str, object]:
-        return await dependencies.knowledge.ask(
-            query=body.query,
-            mode=body.mode,
-            principal_id=context.principal_id,
-            scope_ids=context.scope_ids,
-            authz_revision=context.authz_revision,
-            correlation_id=context.correlation_id,
-        )
+        with tracer.start_as_current_span("atlasmind.agent_run") as span:
+            span.set_attribute("atlasmind.correlation_id", context.correlation_id)
+            trace_id = format(span.get_span_context().trace_id, "032x")
+            result = await dependencies.knowledge.start_ask(
+                query=body.query,
+                mode=body.mode,
+                context=context,
+                trace_id=trace_id,
+            )
+            span.set_attribute("atlasmind.run_id", str(result["id"]))
+            span.set_attribute("atlasmind.outcome", str(result["state"]))
+            return result
+
+    @api.get("/v1/agent-runs")
+    async def list_runs(
+        context: AuthContextDependency,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.list_runs(context.principal_id, limit=limit)
 
     @api.get("/v1/agent-runs/{run_id}")
     async def read_run(
@@ -202,6 +317,69 @@ def create_app(
         context: AuthContextDependency,
     ) -> dict[str, object]:
         return await dependencies.knowledge.get_run(run_id, context.principal_id)
+
+    @api.get("/v1/agent-runs/{run_id}/events")
+    async def stream_run_events(
+        run_id: str,
+        request: Request,
+        context: AuthContextDependency,
+        after: Annotated[int, Query(ge=0)] = 0,
+        last_event_id: Annotated[
+            int | None,
+            Header(alias="Last-Event-ID", ge=0),
+        ] = None,
+    ) -> StreamingResponse:
+        cursor = after
+        if last_event_id is not None:
+            cursor = max(cursor, last_event_id)
+
+        initial = await dependencies.knowledge.list_run_events(
+            run_id, context.principal_id, after=cursor, limit=1
+        )
+        initial_run = await dependencies.knowledge.get_run(run_id, context.principal_id)
+        terminal_states = {"COMPLETED", "PARTIAL", "FAILED", "TIMED_OUT", "CANCELLED"}
+
+        async def events() -> AsyncIterator[bytes]:
+            current = cursor
+            pending = initial
+            heartbeat_ticks = 0
+            terminal_without_pending = not pending and initial_run.get("state") in terminal_states
+            while True:
+                batch = pending or await dependencies.knowledge.list_run_events(
+                    run_id, context.principal_id, after=current, limit=200
+                )
+                pending = ()
+                if batch:
+                    heartbeat_ticks = 0
+                    for item in batch:
+                        current = item.sequence
+                        yield item.as_sse()
+                        if item.is_terminal:
+                            return
+                    continue
+                if terminal_without_pending:
+                    return
+                if await request.is_disconnected():
+                    return
+                await asyncio.sleep(0.35)
+                heartbeat_ticks += 1
+                if heartbeat_ticks % 10 == 0:
+                    current_run = await dependencies.knowledge.get_run(run_id, context.principal_id)
+                    if current_run.get("state") in terminal_states:
+                        return
+                if heartbeat_ticks >= 40:
+                    heartbeat_ticks = 0
+                    yield b": heartbeat\n\n"
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @api.post("/v1/agent-runs/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
     async def cancel_run(
@@ -215,5 +393,127 @@ def create_app(
         context: AuthContextDependency,
     ) -> dict[str, object]:
         return await dependencies.knowledge.graph_conflicts(context.scope_ids)
+
+    @api.get("/v1/graph")
+    async def graph_snapshot(
+        context: AuthContextDependency,
+        limit: Annotated[int, Query(ge=1, le=500)] = 200,
+        query: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
+        entity_types: Annotated[list[str] | None, Query(alias="entityType")] = None,
+        relation_types: Annotated[list[str] | None, Query(alias="relationType")] = None,
+        minimum_confidence: Annotated[
+            float | None, Query(alias="minimumConfidence", ge=0, le=1)
+        ] = None,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.graph_snapshot(
+            context.scope_ids,
+            limit=limit,
+            query=query,
+            entity_types=frozenset(entity_types) if entity_types else None,
+            relation_types=frozenset(relation_types) if relation_types else None,
+            minimum_confidence=minimum_confidence,
+        )
+
+    @api.get("/v1/graph/entities")
+    async def search_graph_entities(
+        context: AuthContextDependency,
+        query: Annotated[str, Query(min_length=1, max_length=200)],
+        entity_types: Annotated[list[str] | None, Query(alias="entityType")] = None,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.search_graph_entities(
+            context.scope_ids,
+            query=query,
+            entity_types=frozenset(entity_types) if entity_types else None,
+            limit=limit,
+        )
+
+    @api.get("/v1/graph/entities/{entity_id}")
+    async def get_graph_entity(
+        entity_id: str,
+        context: AuthContextDependency,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.get_graph_entity(entity_id, context.scope_ids)
+
+    @api.get("/v1/graph/entities/{entity_id}/neighbors")
+    async def get_graph_neighbors(
+        entity_id: str,
+        context: AuthContextDependency,
+        depth: Annotated[int, Query(ge=1, le=3)] = 1,
+        entity_types: Annotated[list[str] | None, Query(alias="entityType")] = None,
+        relation_types: Annotated[list[str] | None, Query(alias="relationType")] = None,
+        minimum_confidence: Annotated[
+            float | None, Query(alias="minimumConfidence", ge=0, le=1)
+        ] = None,
+        limit: Annotated[int, Query(ge=2, le=200)] = 80,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.graph_neighbors(
+            entity_id,
+            context.scope_ids,
+            depth=depth,
+            entity_types=frozenset(entity_types) if entity_types else None,
+            relation_types=frozenset(relation_types) if relation_types else None,
+            minimum_confidence=minimum_confidence,
+            limit=limit,
+        )
+
+    @api.get("/v1/graph/relations/{relation_id}")
+    async def get_graph_relation(
+        relation_id: str,
+        context: AuthContextDependency,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.get_graph_relation(relation_id, context.scope_ids)
+
+    @api.get("/v1/graph/policy")
+    async def get_graph_policy(context: AuthContextDependency) -> dict[str, object]:
+        policy = await dependencies.knowledge.get_graph_policy()
+        return {
+            **policy.as_api_dict(),
+            "availableEntityTypes": sorted(DEFAULT_ENTITY_TYPES),
+            "canManage": Action.MANAGE in context.allowed_actions,
+        }
+
+    @api.get("/v1/rag/strategies")
+    async def get_rag_strategies(
+        _context: AuthContextDependency,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.get_rag_strategy_catalog()
+
+    @api.get("/v1/rag/policy")
+    async def get_rag_policy(context: AuthContextDependency) -> dict[str, object]:
+        policy = await dependencies.knowledge.get_rag_policy()
+        return {
+            **policy.as_api_dict(),
+            "canManage": Action.MANAGE in context.allowed_actions,
+        }
+
+    @api.put("/v1/rag/policy")
+    async def update_rag_policy(
+        body: UpdateRagPolicy,
+        context: AuthContextDependency,
+    ) -> dict[str, object]:
+        policy = await dependencies.knowledge.update_rag_policy(
+            body.model_dump(mode="json", by_alias=True),
+            context=context,
+        )
+        return {
+            **policy.as_api_dict(),
+            "canManage": Action.MANAGE in context.allowed_actions,
+        }
+
+    @api.put("/v1/graph/policy")
+    async def update_graph_policy(
+        body: UpdateGraphPolicy,
+        context: AuthContextDependency,
+    ) -> dict[str, object]:
+        policy = await dependencies.knowledge.update_graph_policy(
+            body.model_dump(by_alias=False),
+            context=context,
+        )
+        return {
+            **policy.as_api_dict(),
+            "availableEntityTypes": sorted(DEFAULT_ENTITY_TYPES),
+            "canManage": Action.MANAGE in context.allowed_actions,
+        }
 
     return api

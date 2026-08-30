@@ -15,7 +15,33 @@ from atlasmind.identity.models import AuthorizationSnapshot
 from atlasmind.tools.approvals import ApprovalBinding, ApprovalService
 from atlasmind.tools.contracts import CapabilityDescriptor, CapabilityRequest, CapabilityResult
 
-CapabilityHandler = Callable[[CapabilityRequest, frozenset[str]], Awaitable[CapabilityResult]]
+PublicActivityWriter = Callable[
+    [str, str, dict[str, object]],
+    Awaitable[None],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityExecutionContext:
+    """Trusted runtime-only context; never populated from model arguments."""
+
+    scopes: frozenset[str]
+    public_activity_writer: PublicActivityWriter | None = None
+
+    async def publish_public_activity(
+        self,
+        activity_id: str,
+        activity_type: str,
+        content: dict[str, object],
+    ) -> None:
+        if self.public_activity_writer is not None:
+            await self.public_activity_writer(activity_id, activity_type, content)
+
+
+CapabilityHandler = Callable[
+    [CapabilityRequest, CapabilityExecutionContext],
+    Awaitable[CapabilityResult],
+]
 AuditWriter = Callable[[str, CapabilityRequest], Awaitable[None]]
 
 
@@ -59,6 +85,8 @@ class ExecutionGateway:
         request: CapabilityRequest,
         context: AuthContext,
         current: AuthorizationSnapshot,
+        *,
+        public_activity_writer: PublicActivityWriter | None = None,
     ) -> CapabilityResult:
         item = self._registry.get(request.capability_name, request.capability_version)
         descriptor = item.descriptor
@@ -102,8 +130,12 @@ class ExecutionGateway:
                 ),
             )
         try:
+            execution_context = CapabilityExecutionContext(
+                scopes=scopes,
+                public_activity_writer=public_activity_writer,
+            )
             result = await asyncio.wait_for(
-                item.handler(request, scopes),
+                item.handler(request, execution_context),
                 timeout=request.budget.timeout_ms / 1_000,
             )
         except TimeoutError:

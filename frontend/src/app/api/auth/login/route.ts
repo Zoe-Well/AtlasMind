@@ -22,7 +22,7 @@ export async function GET() {
     const token = await createSessionToken(
       {
         subject: "local-employee",
-        displayName: "本地管理员",
+        displayName: "本地超级管理员",
         accessToken: "local-development-session",
         expiresAt,
         mode: "local",

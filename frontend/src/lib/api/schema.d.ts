@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/v1/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read server-owned runtime feature availability */
+        get: operations["getRuntimeCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agent-runs": {
         parameters: {
             query?: never;
@@ -11,7 +28,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List recent runs owned by the current principal */
+        get: operations["listAgentRuns"];
         put?: never;
         /** Submit a simple knowledge query or multi-step analysis task */
         post: operations["createAgentRun"];
@@ -55,6 +73,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agent-runs/{runId}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Replay and follow the authorized AG-UI event stream */
+        get: operations["streamAgentRunEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/documents": {
         parameters: {
             query?: never;
@@ -62,7 +97,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List documents visible to the current principal */
+        get: operations["listDocuments"];
         put?: never;
         /** Create a document and initial immutable version */
         post: operations["uploadDocument"];
@@ -97,7 +133,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List immutable versions visible for a document */
+        get: operations["listDocumentVersions"];
         put?: never;
         /** Add an immutable replacement version */
         post: operations["uploadDocumentVersion"];
@@ -158,6 +195,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse authorized active graph entities, relations, and provenance */
+        get: operations["getGraphSnapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/graph/entities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search entities visible through authorized active source documents */
+        get: operations["searchGraphEntities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/graph/entities/{entityId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read an authorized entity and its source-document provenance */
+        get: operations["getGraphEntity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/graph/entities/{entityId}/neighbors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Expand a bounded authorized local graph around an entity */
+        get: operations["getGraphEntityNeighbors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/graph/relations/{relationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read relation confidence and authorized source evidence */
+        get: operations["getGraphRelation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/rag/strategies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the internal Retrieval Strategy catalog and active availability */
+        get: operations["getRagStrategies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/rag/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the active versioned Advanced RAG policy */
+        get: operations["getRagPolicy"];
+        /** Validate and activate a new immutable Advanced RAG policy version */
+        put: operations["updateRagPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/graph/conflicts": {
         parameters: {
             query?: never;
@@ -168,6 +325,24 @@ export interface paths {
         /** List conflicted graph relations visible to an authorized graph manager */
         get: operations["listGraphConflicts"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/graph/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the active entity filtering, resolution, and graph retrieval policy */
+        get: operations["getGraphPolicy"];
+        /** Replace the graph policy with a new immutable version */
+        put: operations["updateGraphPolicy"];
         post?: never;
         delete?: never;
         options?: never;
@@ -264,6 +439,19 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        RuntimeCapabilities: {
+            /** @enum {string} */
+            dataMode: "persistent";
+            localSuperAdmin: boolean;
+            features: {
+                knowledge: boolean;
+                agentRuns: boolean;
+                graphConflicts: boolean;
+                graphBrowse: boolean;
+                approvals: boolean;
+                evaluations: boolean;
+            };
+        };
         /** @description Roles, subject, and knowledge scopes are intentionally absent */
         CreateAgentRunRequest: {
             query: string;
@@ -284,6 +472,7 @@ export interface components {
             id: string;
             /** Format: uuid */
             correlationId: string;
+            traceId?: string | null;
             /** @enum {string} */
             state: "QUEUED" | "RUNNING" | "WAITING_APPROVAL" | "COMPLETED" | "PARTIAL" | "FAILED" | "TIMED_OUT" | "CANCELLED";
             /** @enum {string} */
@@ -295,10 +484,31 @@ export interface components {
             answer?: components["schemas"]["Answer"] | null;
             pendingApproval?: components["schemas"]["ApprovalRequestSummary"] | null;
             failure?: components["schemas"]["Failure"] | null;
+            steps?: components["schemas"]["RunStepSummary"][];
             links: {
                 self: string;
-                approval?: string | null;
             };
+            approval?: string | null;
+        };
+        RunStepSummary: {
+            /** Format: uuid */
+            id: string;
+            ordinal: number;
+            /** @enum {string} */
+            kind: "PLAN" | "RETRIEVAL" | "TOOL" | "COMPOSE" | "VERIFY";
+            /** @enum {string} */
+            state: "PENDING" | "RUNNING" | "WAITING_APPROVAL" | "SUCCEEDED" | "FAILED" | "SKIPPED";
+            /** @enum {string|null} */
+            capabilityName?: "knowledge_search" | "search_knowledge" | "search_graph" | "query_structured_data" | null;
+            resultRef?: string | null;
+            /** Format: date-time */
+            startedAt?: string | null;
+            /** Format: date-time */
+            finishedAt?: string | null;
+        };
+        AgentRunList: {
+            items: components["schemas"]["AgentRun"][];
+            total: number;
         };
         Answer: {
             text: string;
@@ -308,6 +518,7 @@ export interface components {
             evidenceStatus: "SUFFICIENT" | "PARTIAL" | "CONFLICTED" | "INSUFFICIENT";
             limitations?: string[];
             citations: components["schemas"]["Citation"][];
+            graphPaths?: components["schemas"]["GraphPath"][];
         };
         Citation: {
             /** Format: uuid */
@@ -324,6 +535,8 @@ export interface components {
             version: string;
             locator: string;
             title: string;
+            /** @description Authorization-filtered source excerpt for evidence preview */
+            excerpt?: string | null;
             href?: string | null;
         };
         Failure: {
@@ -351,6 +564,27 @@ export interface components {
             knowledgeScopes?: string[];
             /** Format: date-time */
             createdAt: string;
+        };
+        DocumentList: {
+            items: components["schemas"]["Document"][];
+            total: number;
+        };
+        DocumentVersion: {
+            /** Format: uuid */
+            id: string;
+            versionLabel: string;
+            lifecycleState: string;
+            searchable: boolean;
+            sizeBytes: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: uuid */
+            ingestionJobId?: string | null;
+            ingestionState?: string | null;
+        };
+        DocumentVersionList: {
+            items: components["schemas"]["DocumentVersion"][];
+            total: number;
         };
         IngestionJob: {
             /** Format: uuid */
@@ -390,6 +624,147 @@ export interface components {
         };
         GraphConflictList: {
             relations: string[];
+        };
+        GraphSnapshot: {
+            nodes: components["schemas"]["GraphNode"][];
+            edges: components["schemas"]["GraphEdge"][];
+            /** @enum {string} */
+            mode: "GLOBAL" | "LOCAL";
+            truncated: boolean;
+            /** Format: uuid */
+            rootEntityId?: string;
+            depth?: number;
+        };
+        GraphEntitySearchResult: {
+            items: components["schemas"]["GraphNode"][];
+            truncated: boolean;
+        };
+        GraphEntityDetail: components["schemas"]["GraphNode"] & {
+            degree: number;
+            properties: {
+                [key: string]: unknown;
+            };
+            sourceDocuments: components["schemas"]["GraphEntitySource"][];
+        };
+        GraphEntitySource: components["schemas"]["GraphEvidence"] & {
+            surface: string;
+            confidence: number;
+        };
+        RagStrategyConfiguration: {
+            enabled: boolean;
+            settings: {
+                [key: string]: unknown;
+            };
+        };
+        RetrievalRuntimeBudget: {
+            totalTimeoutMs: number;
+            strategyTimeoutMs: number;
+            maxLlmCalls: number;
+            maxEmbeddingCalls: number;
+            maxRetrievalCalls: number;
+            maxQueryVariants: number;
+            maxCandidatesPerRetriever: number;
+            maxTotalCandidates: number;
+            resultLimit: number;
+            maxStrategyRetries: number;
+        };
+        RagPolicyUpdate: {
+            strategies: {
+                [key: string]: components["schemas"]["RagStrategyConfiguration"];
+            };
+            budget: components["schemas"]["RetrievalRuntimeBudget"];
+        };
+        RagPolicy: components["schemas"]["RagPolicyUpdate"] & {
+            version: number;
+            canManage: boolean;
+        };
+        RagStrategyCatalogItem: {
+            id: string;
+            /** @enum {string} */
+            stage: "QUERY_PROCESSING" | "RETRIEVAL" | "FUSION" | "RERANK";
+            description: string;
+            enabled: boolean;
+            settings: {
+                [key: string]: unknown;
+            };
+            settingsSchema: {
+                [key: string]: unknown;
+            };
+            planParametersSchema: {
+                [key: string]: unknown;
+            };
+            conflictsWith: string[];
+        };
+        RagStrategyCatalog: {
+            policyVersion: number;
+            strategies: components["schemas"]["RagStrategyCatalogItem"][];
+        };
+        GraphPolicyUpdate: {
+            allowedEntityTypes: ("SYSTEM" | "PRODUCT" | "SERVICE" | "API" | "ERROR_CODE" | "ORGANIZATION" | "ORG_UNIT" | "DATABASE" | "QUEUE" | "TECH_COMPONENT")[];
+            allowedRelationTypes: ("CALLS" | "CONSUMES" | "DEPENDS_ON" | "DEPLOYED_ON" | "EXPOSES" | "INTEGRATES_WITH" | "MANAGED_BY" | "OWNED_BY" | "PART_OF" | "PRODUCES" | "RETURNS_ERROR" | "STORES_IN" | "USES")[];
+            /** @default 0.6 */
+            minimumEntityConfidence: number;
+            /** @default 0.7 */
+            minimumRelationConfidence: number;
+            /** @default 8 */
+            seedLimit: number;
+            /** @default 2 */
+            maxHops: number;
+            /** @default 40 */
+            maxNodes: number;
+            /** @default 24 */
+            maxPaths: number;
+            /** @default 24 */
+            maxGraphChunks: number;
+            allowedAliases?: {
+                [key: string]: string;
+            };
+        };
+        GraphPolicy: components["schemas"]["GraphPolicyUpdate"] & {
+            version: number;
+            availableEntityTypes: ("SYSTEM" | "PRODUCT" | "SERVICE" | "API" | "ERROR_CODE" | "ORGANIZATION" | "ORG_UNIT" | "DATABASE" | "QUEUE" | "TECH_COMPONENT")[];
+            /** @description Whether the current principal may create a new graph policy version */
+            canManage: boolean;
+        };
+        GraphNode: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            type: string;
+            aliases: string[];
+            mentionCount: number;
+            documentCount: number;
+        };
+        GraphEdge: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            source: string;
+            /** Format: uuid */
+            target: string;
+            type: string;
+            confidence: number;
+            evidence: components["schemas"]["GraphEvidence"][];
+        };
+        GraphEvidence: {
+            /** Format: uuid */
+            documentId: string;
+            documentTitle: string;
+            /** Format: uuid */
+            documentVersionId: string;
+            /** Format: uuid */
+            chunkId: string;
+            locator: string;
+        };
+        GraphPath: {
+            entities: string[];
+            relations: string[];
+            directions: boolean[];
+            sources: {
+                /** Format: uuid */
+                chunkId: string;
+                locator: string;
+            }[];
         };
         GraphEntityMergeRequest: {
             /** Format: uuid */
@@ -541,6 +916,50 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getRuntimeCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Persistent runtime capabilities */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeCapabilities"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    listAgentRuns: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent authorized runs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
     createAgentRun: {
         parameters: {
             query?: never;
@@ -625,6 +1044,58 @@ export interface operations {
             };
             404: components["responses"]["ResourceNotAvailable"];
             409: components["responses"]["InvalidState"];
+        };
+    };
+    streamAgentRunEvents: {
+        parameters: {
+            query?: {
+                after?: number;
+            };
+            header?: {
+                /** @description Last persisted per-run sequence received by the client. */
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream. Each data object is an AG-UI event with AtlasMind metadata containing schemaVersion, eventId, sequence, runId, correlationId and visibility. Retrieval Workflow progress uses ACTIVITY_SNAPSHOT with activityType=atlasmind.retrieval. Its allowlisted content contains only stage, strategyId, status, public summary, bounded counts/timing, selected strategy IDs and a mapped degradation code; it never contains query text, prompt, scope or evidence body. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            404: components["responses"]["ResourceNotAvailable"];
+        };
+    };
+    listDocuments: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized document list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
         };
     };
     uploadDocument: {
@@ -725,6 +1196,29 @@ export interface operations {
                 };
             };
             403: components["responses"]["ActionNotAllowed"];
+            404: components["responses"]["ResourceNotAvailable"];
+        };
+    };
+    listDocumentVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                documentId: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized document versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentVersionList"];
+                };
+            };
             404: components["responses"]["ResourceNotAvailable"];
         };
     };
@@ -854,6 +1348,216 @@ export interface operations {
             409: components["responses"]["InvalidState"];
         };
     };
+    getGraphSnapshot: {
+        parameters: {
+            query?: {
+                limit?: number;
+                query?: string;
+                entityType?: string[];
+                relationType?: string[];
+                minimumConfidence?: number;
+            };
+            header?: {
+                /** @description Caller correlation ID; server generates one when absent */
+                "X-Correlation-ID"?: components["parameters"]["CorrelationId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized graph snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSnapshot"];
+                };
+            };
+            403: components["responses"]["ActionNotAllowed"];
+        };
+    };
+    searchGraphEntities: {
+        parameters: {
+            query: {
+                query: string;
+                entityType?: string[];
+                limit?: number;
+            };
+            header?: {
+                /** @description Caller correlation ID; server generates one when absent */
+                "X-Correlation-ID"?: components["parameters"]["CorrelationId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized entity matches */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEntitySearchResult"];
+                };
+            };
+            403: components["responses"]["ActionNotAllowed"];
+        };
+    };
+    getGraphEntity: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Caller correlation ID; server generates one when absent */
+                "X-Correlation-ID"?: components["parameters"]["CorrelationId"];
+            };
+            path: {
+                entityId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized entity detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEntityDetail"];
+                };
+            };
+            404: components["responses"]["ResourceNotAvailable"];
+        };
+    };
+    getGraphEntityNeighbors: {
+        parameters: {
+            query?: {
+                depth?: number;
+                entityType?: string[];
+                relationType?: string[];
+                minimumConfidence?: number;
+                limit?: number;
+            };
+            header?: {
+                /** @description Caller correlation ID; server generates one when absent */
+                "X-Correlation-ID"?: components["parameters"]["CorrelationId"];
+            };
+            path: {
+                entityId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Incremental authorized scene data */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphSnapshot"];
+                };
+            };
+            404: components["responses"]["ResourceNotAvailable"];
+        };
+    };
+    getGraphRelation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Caller correlation ID; server generates one when absent */
+                "X-Correlation-ID"?: components["parameters"]["CorrelationId"];
+            };
+            path: {
+                relationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized relation evidence */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphEdge"];
+                };
+            };
+            404: components["responses"]["ResourceNotAvailable"];
+        };
+    };
+    getRagStrategies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Server-owned Strategy catalog; entries are not Agent tools */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RagStrategyCatalog"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    getRagPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active Advanced RAG policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RagPolicy"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    updateRagPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RagPolicyUpdate"];
+            };
+        };
+        responses: {
+            /** @description Newly active Advanced RAG policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RagPolicy"];
+                };
+            };
+            403: components["responses"]["ActionNotAllowed"];
+            422: components["responses"]["InvalidRequest"];
+        };
+    };
     listGraphConflicts: {
         parameters: {
             query?: never;
@@ -876,6 +1580,59 @@ export interface operations {
                 };
             };
             403: components["responses"]["ActionNotAllowed"];
+        };
+    };
+    getGraphPolicy: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Caller correlation ID; server generates one when absent */
+                "X-Correlation-ID"?: components["parameters"]["CorrelationId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active versioned graph policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphPolicy"];
+                };
+            };
+            403: components["responses"]["ActionNotAllowed"];
+        };
+    };
+    updateGraphPolicy: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Caller correlation ID; server generates one when absent */
+                "X-Correlation-ID"?: components["parameters"]["CorrelationId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphPolicyUpdate"];
+            };
+        };
+        responses: {
+            /** @description Newly active graph policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphPolicy"];
+                };
+            };
+            403: components["responses"]["ActionNotAllowed"];
+            422: components["responses"]["InvalidRequest"];
         };
     };
     mergeGraphEntity: {

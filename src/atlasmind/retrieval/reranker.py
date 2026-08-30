@@ -25,7 +25,7 @@ async def rerank_candidates(
             ),
             timeout=timeout_ms / 1000,
         )
-    except TimeoutError:
+    except (TimeoutError, ValueError):
         return bounded[:limit]
     return [
         RetrievalCandidate(by_id[item.identifier].chunk, item.score, "reranker")

@@ -1,10 +1,12 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Activity, Beaker, ChevronDown, Database, GitFork, LockKeyhole, LogOut, MessageSquareText, Network, Plus, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import type { PublicSession } from "@/lib/auth/session";
+import { listAgentRuns } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
 const primaryNavigation = [
@@ -33,6 +35,7 @@ function NavGroup({ items }: { items: typeof primaryNavigation }) {
 }
 
 export function AppShell({ session, children }: { session: PublicSession; children: React.ReactNode }) {
+  const history = useQuery({ queryKey: ["agent-runs", "sidebar"], queryFn: () => listAgentRuns(8), refetchInterval: 10000 });
   return <div className="app-frame">
     <aside className="app-sidebar">
       <Link href="/chat" className="flex items-center gap-3 px-2" aria-label="AtlasMind 首页">
@@ -46,9 +49,11 @@ export function AppShell({ session, children }: { session: PublicSession; childr
       <div className="mx-2 mt-[18px] h-px bg-[#dcdcd7]" />
       <p className="sidebar-label">运营与治理</p><NavGroup items={operationNavigation} />
       <p className="sidebar-label history-heading">历史对话</p>
-      <div className="min-h-0 overflow-hidden">
-        <Link href="/chat" className="block truncate rounded-[9px] bg-[#e5e5e0] px-3 py-2.5 text-xs text-[#20212a]">企业退款政策与申请流程</Link>
-        <p className="mt-1 px-3 py-2 text-[11px] leading-5 text-[#858995]">历史列表接口待接入</p>
+      <div className="min-h-0 overflow-auto">
+        {history.data?.items.map((run)=><Link key={run.id} href={`/runs/${run.id}`} className="mb-1 block rounded-[9px] px-3 py-2.5 hover:bg-[#e5e5e0]"><span className="block truncate text-xs text-[#20212a]">{run.answer?.text.slice(0,28)??`${run.taskType??"SIMPLE"} 知识问答`}</span><span className="mt-1 block text-[9px] text-[#858995]">{new Date(run.createdAt).toLocaleString("zh-CN")}</span></Link>)}
+        {history.isLoading?<p className="px-3 py-2 text-[10px] text-[#858995]">正在加载真实记录…</p>:null}
+        {history.data&&!history.data.items.length?<p className="px-3 py-2 text-[10px] leading-5 text-[#858995]">还没有历史问答</p>:null}
+        {history.error?<p className="px-3 py-2 text-[10px] leading-5 text-[#9b4040]">历史记录暂时无法读取</p>:null}
       </div>
       <div className="mt-auto flex items-center gap-3 rounded-xl bg-[#e8e8e4] p-2.5">
         <span className="grid size-[34px] shrink-0 place-items-center rounded-full bg-[#d8d9f6] text-xs font-bold text-[#4d55ca]">{session.displayName.slice(0, 1).toUpperCase()}</span>

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from atlasmind.agent.decisions import AgentDecision, AgentObservation, AgentToolSpec
 from atlasmind.application.real_mvp import PersistentKnowledgeService, RealAI, RealGraphExtractor
 from atlasmind.domain.common import ModelCapabilityUnavailable
+from atlasmind.infrastructure.ai_ports import RankedText
 from atlasmind.infrastructure.database import create_engine, create_session_factory
 from atlasmind.infrastructure.neo4j_graphrag_extraction import Neo4jGraphRAGExtractor
 from atlasmind.infrastructure.neo4j_runtime import Neo4jRuntime
@@ -38,12 +41,43 @@ class UnavailableAI:
     async def embed(self, _texts: list[str]) -> list[list[float]]:
         raise self._error()
 
+    async def rerank(
+        self,
+        _query: str,
+        _texts: dict[str, str],
+        *,
+        limit: int,
+    ) -> list[RankedText]:
+        del limit
+        raise self._error()
+
+    async def complete_json(
+        self,
+        _prompt: str,
+        *,
+        max_tokens: int = 1_200,
+    ) -> dict[str, object]:
+        del max_tokens
+        raise self._error()
+
+    async def decide_agent_action(
+        self,
+        _query: str,
+        _tools: Sequence[AgentToolSpec],
+        _observations: Sequence[AgentObservation],
+        *,
+        remaining_steps: int,
+        remaining_tools: int,
+    ) -> AgentDecision:
+        del remaining_steps, remaining_tools
+        raise self._error()
+
     async def answer(
         self,
         _query: str,
         _evidence: dict[str, str],
         *,
-        graph_facts: tuple[str, ...],
+        graph_facts: tuple[str, ...] = (),
     ) -> GroundedAnswer:
         del graph_facts
         raise self._error()
@@ -70,8 +104,10 @@ class Runtime:
     async def verify(self) -> None:
         await self.object_store.ensure_bucket()
         await self.graph.verify()
+        await self.knowledge.reconcile_graph_lifecycle()
 
     async def close(self) -> None:
+        await self.knowledge.close()
         await self.engine.dispose()
         await self.graph.close()
         close = getattr(self.ai, "close", None)

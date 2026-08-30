@@ -5,17 +5,20 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OverlayPanel } from "@/components/ui/overlay-panel";
-import { decideApproval,readApproval } from "@/lib/api/client";
+import { decideApproval,readApproval,readRuntimeCapabilities } from "@/lib/api/client";
 export function ApprovalWorkbench({initialApprovalId=""}:{initialApprovalId?:string}){
  const [inputId,setInputId]=useState(initialApprovalId),[approvalId,setApprovalId]=useState(initialApprovalId),[reason,setReason]=useState(""),[detailOpen,setDetailOpen]=useState(Boolean(initialApprovalId));
- const approval=useQuery({queryKey:["approval",approvalId],queryFn:()=>readApproval(approvalId),enabled:Boolean(approvalId)});
+ const capabilities=useQuery({queryKey:["runtime-capabilities"],queryFn:readRuntimeCapabilities});
+ const approvalsEnabled=capabilities.data?.features.approvals===true;
+ const approval=useQuery({queryKey:["approval",approvalId],queryFn:()=>readApproval(approvalId),enabled:Boolean(approvalId)&&approvalsEnabled});
  const decision=useMutation({mutationFn:(value:"APPROVE"|"DENY")=>decideApproval(approvalId,{decision:value,reason:reason.trim()||undefined}),onSuccess:(value)=>approval.refetch().then(()=>value)});
  const terminal=approval.data?approval.data.state!=="PENDING":true;
  function read(){setApprovalId(inputId.trim());setDetailOpen(true)}
  return <div><header className="page-topbar"><div><p className="mb-1 text-[10px] text-[#858995]">受控执行</p><h1 className="page-title">审批中心</h1></div><Badge className="bg-[#faeaea] text-[#9b4040]"><ShieldCheck className="mr-1 size-3"/>高风险操作需人工确认</Badge></header>
  <div className="page-content"><div><p className="eyebrow">Approval center</p><h2 className="heading-xl">高风险能力审批</h2><p className="mt-2 max-w-2xl text-xs leading-6 text-[#858995]">审批绑定具体主体、能力、目标和规范化参数摘要；过期、换参或重放都会被拒绝。</p></div>
+ {!capabilities.isLoading&&!approvalsEnabled?<div className="mt-6 rounded-xl bg-[#fbf2df] p-4 text-xs leading-6 text-[#8a5a17]">当前持久化运行时尚未启用审批工作流。页面不会展示或提交演示审批。</div>:null}
  <div className="mt-7 grid grid-cols-4 gap-4 max-[900px]:grid-cols-2">{["等待处理","今日批准","今日拒绝","已过期"].map(label=><div className="panel p-5" key={label}><p className="text-[10px] text-[#858995]">{label}</p><strong className="mt-3 block text-2xl text-[#20212a]">—</strong><small className="text-[10px] text-[#a0a3ab]">列表接口待接入</small></div>)}</div>
- <section className="panel mt-6"><div className="panel-head"><div><h3 className="panel-title">审批请求</h3><p className="mt-1 text-[10px] text-[#858995]">当前契约支持按 Approval ID 读取和决策。</p></div><div className="flex gap-2"><div className="flex h-9 items-center gap-2 rounded-[9px] border border-[#deded9] px-3"><Search className="size-3.5 text-[#858995]"/><input aria-label="审批 ID" value={inputId} onChange={e=>setInputId(e.target.value)} className="w-52 border-0 bg-transparent text-[11px] outline-none" placeholder="输入 Approval ID"/></div><Button size="sm" disabled={!inputId.trim()} onClick={read}>读取审批</Button></div></div>
+ <section className="panel mt-6"><div className="panel-head"><div><h3 className="panel-title">审批请求</h3><p className="mt-1 text-[10px] text-[#858995]">运行时启用审批能力后才允许读取和决策。</p></div><div className="flex gap-2"><div className="flex h-9 items-center gap-2 rounded-[9px] border border-[#deded9] px-3"><Search className="size-3.5 text-[#858995]"/><input aria-label="审批 ID" value={inputId} onChange={e=>setInputId(e.target.value)} disabled={!approvalsEnabled} className="w-52 border-0 bg-transparent text-[11px] outline-none" placeholder="输入 Approval ID"/></div><Button size="sm" disabled={!approvalsEnabled||!inputId.trim()} onClick={read}>读取审批</Button></div></div>
  {approval.isError?<p role="alert" className="m-5 rounded-xl bg-[#faeaea] p-4 text-xs text-[#9b4040]">{approval.error.message}</p>:<div className="empty-state"><div><ShieldCheck className="mx-auto size-9 text-[#b4b6bd]"/><p className="mt-3 text-xs text-[#656975]">审批列表接口尚未提供</p><p className="mt-2 text-[10px]">从等待审批的运行进入，或按 ID 读取。</p></div></div>}</section></div>
  <OverlayPanel open={detailOpen} onOpenChange={setDetailOpen} title="审批请求详情" description="请核对能力、目标和参数摘要后作出一次性决定。" wide footer={approval.data?<><Button variant="danger" onClick={()=>decision.mutate("DENY")} disabled={terminal||decision.isPending}><XCircle className="size-4"/>拒绝</Button><Button onClick={()=>decision.mutate("APPROVE")} disabled={terminal||decision.isPending}><CheckCircle2 className="size-4"/>批准</Button></>:undefined}>
   {approval.isLoading?<p className="flex items-center gap-2 text-xs text-[#858995]"><LoaderCircle className="size-4 animate-spin"/>正在读取审批…</p>:null}

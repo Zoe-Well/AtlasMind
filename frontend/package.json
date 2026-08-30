@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.15.1",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
@@ -17,17 +19,26 @@
     "generate:api": "openapi-typescript ../specs/001-enterprise-agentic-rag/contracts/openapi.yaml -o src/lib/api/schema.d.ts"
   },
   "dependencies": {
+    "@ag-ui/core": "^0.0.58",
     "@hookform/resolvers": "^5.2.0",
     "@radix-ui/react-dialog": "^1.1.0",
+    "@react-sigma/core": "^5.0.6",
+    "@react-sigma/layout-forceatlas2": "^5.0.6",
     "@tanstack/react-query": "^5.90.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "graphology": "^0.26.0",
+    "graphology-communities-louvain": "^2.0.2",
+    "graphology-layout-forceatlas2": "^0.10.1",
+    "graphology-layout-noverlap": "^0.4.2",
+    "graphology-metrics": "^2.4.0",
     "jose": "^6.1.0",
     "lucide-react": "^0.468.0",
     "next": "^16.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-hook-form": "^7.65.0",
+    "sigma": "^3.0.3",
     "tailwind-merge": "^3.3.0",
     "zod": "^4.1.0",
     "zustand": "^5.0.0"

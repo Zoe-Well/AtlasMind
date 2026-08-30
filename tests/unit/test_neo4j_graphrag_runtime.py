@@ -33,11 +33,11 @@ class RecordingRetriever:
             records=[
                 FakeRecord(
                     {
-                        "source": "AtlasMind",
-                        "relation_type": "USES",
-                        "target": "PostgreSQL",
-                        "chunk_id": "chunk-1",
-                        "locator": "paragraph:1",
+                        "nodes": ["AtlasMind", "PostgreSQL", "Platform Team"],
+                        "relations": ["USES", "OWNED_BY"],
+                        "directions": [True, True],
+                        "chunk_ids": ["chunk-1", "chunk-2"],
+                        "locators": ["paragraph:1", "paragraph:2"],
                     }
                 )
             ]
@@ -80,7 +80,10 @@ async def test_facts_passes_authorized_entity_allowlist_into_framework_retriever
         document_version_ids=frozenset({"version-a"}),
     )
 
-    assert facts == ("AtlasMind -[USES]-> PostgreSQL (source=chunk-1 locator=paragraph:1)",)
+    assert facts == (
+        "AtlasMind -[USES]-> PostgreSQL -[OWNED_BY]-> Platform Team "
+        "(sources=chunk-1@paragraph:1, chunk-2@paragraph:2)",
+    )
     assert retriever.calls[0]["filters"] == {"canonical_id": {"$in": ["entity-a", "entity-b"]}}
     assert retriever.calls[0]["query_params"]["scope_ids"] == ["scope-a"]
     assert retriever.calls[0]["query_params"]["version_ids"] == ["version-a"]
@@ -137,7 +140,8 @@ def test_projection_uses_framework_graph_with_canonical_ids_and_embeddings() -> 
     assert {node.id for node in graph.nodes} == {"entity-a", "entity-b"}
     assert graph.nodes[0].embedding_properties["embedding"]
     assert graph.relationships[0].type == "RELATED"
-    assert graph.relationships[0].properties["canonical_id"] == "relation-a"
+    assert graph.relationships[0].properties["canonical_id"] == "relation-a:version-a:chunk-a"
+    assert graph.relationships[0].properties["relation_id"] == "relation-a"
     assert graph.relationships[0].properties["scope_ids"] == ["scope-a"]
 
 

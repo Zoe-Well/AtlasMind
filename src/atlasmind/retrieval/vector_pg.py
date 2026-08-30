@@ -30,6 +30,7 @@ class PgVectorRetriever:
                    generation, 1 - (embedding <=> CAST(:embedding AS vector)) AS score
             FROM knowledge_chunks
             WHERE active = TRUE AND generation = :generation AND scope_ids && :scopes
+              AND vector_dims(embedding) = vector_dims(CAST(:embedding AS vector))
             ORDER BY embedding <=> CAST(:embedding AS vector) LIMIT :limit"""),
             {
                 "embedding": list(embedding),

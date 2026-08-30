@@ -2,16 +2,34 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import httpx
 import pytest
 
 from atlasmind.api.app import create_app
+from atlasmind.api.middleware.auth_context import AuthContext
 from atlasmind.application.real_mvp import PersistentKnowledgeService
 from atlasmind.domain.common import ModelCapabilityUnavailable
+from atlasmind.identity.models import Action
 from atlasmind.runtime import UnavailableAI
 from atlasmind.settings import Settings
+
+
+def auth_context() -> AuthContext:
+    now = datetime.now(UTC)
+    return AuthContext(
+        principal_id="00000000-0000-4000-8000-000000000001",
+        role_codes=frozenset({"local-super-admin"}),
+        scope_ids=frozenset({"00000000-0000-4000-8000-000000000010"}),
+        allowed_actions=frozenset(Action),
+        authz_revision=1,
+        policy_revision=1,
+        correlation_id="00000000-0000-4000-8000-000000000099",
+        issued_at=now,
+        expires_at=now + timedelta(hours=8),
+    )
 
 
 def unavailable_service() -> PersistentKnowledgeService:
@@ -49,10 +67,7 @@ async def test_model_dependent_operations_fail_before_creating_side_effects() ->
         await service.ask(
             query="What is the policy?",
             mode="AUTO",
-            principal_id="00000000-0000-4000-8000-000000000001",
-            scope_ids=frozenset({"00000000-0000-4000-8000-000000000010"}),
-            authz_revision=1,
-            correlation_id="00000000-0000-4000-8000-000000000099",
+            context=auth_context(),
         )
 
     with pytest.raises(ModelCapabilityUnavailable):

@@ -96,6 +96,7 @@ class EvidenceEnvelope(BaseModel):
     content_ref: str
     content_digest: str
     facts: tuple[str, ...] = ()
+    metadata: dict[str, Any] = Field(default_factory=dict)
     validity: str = "VALID"
     authz_revision: int
     verified_at: datetime

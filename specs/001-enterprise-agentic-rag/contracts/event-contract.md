@@ -37,6 +37,26 @@ generation 幂等。事件不是权限事实源，处理前必须加载当前规
 - classification 决定 transport、日志、访问和保留策略；未知分级拒绝发布。
 - 失败重试不得修改原事件；重试元数据保存在 delivery record。
 
+## AgentRun Public SSE
+
+AgentRun 面向浏览器的事件流采用 AG-UI 事件名称，并额外携带 AtlasMind `metadata`：
+`schemaVersion`、`eventId`、单调递增的 per-run `sequence`、`runId`、`correlationId`、可选
+`traceId` 和固定的 `visibility=PUBLIC`。客户端使用 SSE `id`、`after` 或 `Last-Event-ID`
+恢复遗漏事件。
+
+`knowledge_search` 内部 Retrieval Workflow 使用 `ACTIVITY_SNAPSHOT`，其中
+`activityType=atlasmind.retrieval`。同一个活动从 `RUNNING` 更新为终态时复用稳定
+`messageId`；`parentMessageId` 指向外层 Tool Call/RunStep。允许公开的内容仅包括：
+
+- 固定阶段：`PLAN`、`QUERY_PROCESSING`、`RETRIEVAL`、`FUSION`、`RERANK`、`EVIDENCE`、`WORKFLOW`；
+- 服务器注册的 Strategy ID、活动状态和确定性中文摘要；
+- 非负整数形式的候选数、Evidence 数、调用次数、查询表达数量和毫秒耗时；
+- 通过确定性映射的降级代码。
+
+不得发送原始或改写 query、HyDE 文本、metadata filter 值、Prompt、隐藏推理、Evidence
+正文、scope/AuthContext、相似度分数或模型原始 reason。LangGraph 原生 `debug`、`tasks`、
+`updates` 和完整 state 不能直接转发到 PUBLIC SSE；必须先转换为上述白名单 Activity。
+
 ## Required Event Families
 
 ### Knowledge and Projection

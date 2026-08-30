@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import cast
 
 from neo4j import AsyncDriver, AsyncGraphDatabase, Driver, GraphDatabase
 from neo4j.exceptions import Neo4jError
@@ -40,6 +41,47 @@ class GraphProjectionRecord:
     scope_ids: tuple[str, ...]
     generation: int
     confidence: float
+    extraction_version: str = "unknown"
+    policy_version: int = 1
+    evidence_decision: str = "ELIGIBLE"
+    source_aliases: tuple[str, ...] = ()
+    target_aliases: tuple[str, ...] = ()
+    source_document_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedGraphPath:
+    """Authorized bounded graph path with immutable source references."""
+
+    entities: tuple[str, ...]
+    relations: tuple[str, ...]
+    directions: tuple[bool, ...]
+    chunk_ids: tuple[str, ...]
+    locators: tuple[str, ...]
+
+    @property
+    def fact(self) -> str:
+        parts = [self.entities[0]]
+        for relation, forward, entity in zip(
+            self.relations, self.directions, self.entities[1:], strict=True
+        ):
+            parts.append(f"-[{relation}]-> {entity}" if forward else f"<-[{relation}]- {entity}")
+        sources = ", ".join(
+            f"{chunk_id}@{locator}"
+            for chunk_id, locator in zip(self.chunk_ids, self.locators, strict=True)
+        )
+        return f"{' '.join(parts)} (sources={sources})"
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "entities": list(self.entities),
+            "relations": list(self.relations),
+            "directions": list(self.directions),
+            "sources": [
+                {"chunkId": chunk_id, "locator": locator}
+                for chunk_id, locator in zip(self.chunk_ids, self.locators, strict=True)
+            ],
+        }
 
 
 class AtlasMindKGWriter(KGWriter):
@@ -165,6 +207,133 @@ class Neo4jRuntime:
         await asyncio.to_thread(self._create_vector_index, dimension)
         return len(records)
 
+    async def retrieve_paths(
+        self,
+        query: str,
+        *,
+        query_embedding: list[float],
+        scope_ids: frozenset[str],
+        document_version_ids: frozenset[str],
+        limit: int = 24,
+        seed_limit: int = 8,
+        max_hops: int = 2,
+        max_nodes: int = 40,
+        allowed_entity_types: frozenset[str] = frozenset(),
+        allowed_relation_types: frozenset[str] = frozenset(),
+        minimum_confidence: float = 0.0,
+    ) -> tuple[RetrievedGraphPath, ...]:
+        if not scope_ids or not document_version_ids or not query_embedding:
+            return ()
+        authorized_ids = await self._authorized_entity_ids(
+            scope_ids=scope_ids,
+            document_version_ids=document_version_ids,
+            allowed_entity_types=allowed_entity_types,
+            allowed_relation_types=allowed_relation_types,
+            minimum_confidence=minimum_confidence,
+        )
+        if not authorized_ids:
+            return ()
+        retriever = await self._get_retriever()
+        name_seed_ids = await self._name_seed_entity_ids(
+            query,
+            authorized_ids=authorized_ids,
+            limit=seed_limit,
+        )
+        seed_groups = [name_seed_ids, authorized_ids] if name_seed_ids else [authorized_ids]
+        rows: list[dict[str, object]] = []
+        for seed_ids in seed_groups:
+            result = await asyncio.to_thread(
+                retriever.get_search_results,
+                query_vector=query_embedding,
+                top_k=min(seed_limit, len(seed_ids)),
+                filters={"canonical_id": {"$in": sorted(seed_ids)}},
+                query_params={
+                    "scope_ids": sorted(scope_ids),
+                    "version_ids": sorted(document_version_ids),
+                    "fact_limit": limit,
+                    "max_hops": max_hops,
+                    "allowed_entity_types": sorted(allowed_entity_types),
+                    "allowed_relation_types": sorted(allowed_relation_types),
+                    "minimum_confidence": minimum_confidence,
+                },
+            )
+            rows.extend(record.data() for record in result.records)
+        paths: list[RetrievedGraphPath] = []
+        seen: set[tuple[tuple[str, ...], tuple[str, ...], tuple[bool, ...], tuple[str, ...]]] = (
+            set()
+        )
+        expanded_nodes: set[str] = set()
+        for row in rows:
+            if "nodes" in row:
+                entities = tuple(map(str, cast(list[object], row.get("nodes") or [])))
+                relations = tuple(map(str, cast(list[object], row.get("relations") or [])))
+                directions = tuple(map(bool, cast(list[object], row.get("directions") or [])))
+                chunk_ids = tuple(map(str, cast(list[object], row.get("chunk_ids") or [])))
+                locators = tuple(map(str, cast(list[object], row.get("locators") or [])))
+            else:
+                entities = (str(row["source"]), str(row["target"]))
+                relations = (str(row["relation_type"]),)
+                directions = (True,)
+                chunk_ids = (str(row["chunk_id"]),)
+                locators = (str(row["locator"]),)
+            if (
+                len(entities) != len(relations) + 1
+                or len(directions) != len(relations)
+                or len(chunk_ids) != len(relations)
+                or len(locators) != len(relations)
+            ):
+                continue
+            identity = (entities, relations, directions, chunk_ids)
+            if identity in seen:
+                continue
+            candidate_nodes = expanded_nodes | set(entities)
+            if len(candidate_nodes) > max_nodes:
+                continue
+            seen.add(identity)
+            expanded_nodes = candidate_nodes
+            paths.append(RetrievedGraphPath(entities, relations, directions, chunk_ids, locators))
+            if len(paths) >= limit:
+                break
+        return tuple(paths)
+
+    async def _name_seed_entity_ids(
+        self,
+        query: str,
+        *,
+        authorized_ids: frozenset[str],
+        limit: int,
+    ) -> frozenset[str]:
+        if getattr(self, "_driver", None) is None:  # pragma: no cover - driverless unit doubles
+            return frozenset()
+        terms = tuple(
+            dict.fromkeys(
+                value.casefold()
+                for value in query.replace("/", " ").replace("_", " ").split()
+                if len(value.strip()) >= 2
+            )
+        )[:20]
+        if not terms:
+            return frozenset()
+        async with self._driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (entity:Entity)
+                WHERE entity.canonical_id IN $authorized_ids
+                  AND any(term IN $terms WHERE
+                      toLower(entity.name) CONTAINS term OR
+                      any(alias IN coalesce(entity.aliases, []) WHERE
+                          toLower(alias) CONTAINS term))
+                RETURN entity.canonical_id AS canonical_id
+                ORDER BY entity.name, entity.canonical_id
+                LIMIT $limit
+                """,
+                authorized_ids=sorted(authorized_ids),
+                terms=list(terms),
+                limit=limit,
+            )
+            rows = await result.data()
+        return frozenset(str(row["canonical_id"]) for row in rows)
+
     async def facts(
         self,
         query: str,
@@ -174,33 +343,14 @@ class Neo4jRuntime:
         document_version_ids: frozenset[str],
         limit: int = 30,
     ) -> tuple[str, ...]:
-        del query
-        if not scope_ids or not document_version_ids or not query_embedding:
-            return ()
-        authorized_ids = await self._authorized_entity_ids(
+        paths = await self.retrieve_paths(
+            query,
+            query_embedding=query_embedding,
             scope_ids=scope_ids,
             document_version_ids=document_version_ids,
+            limit=limit,
         )
-        if not authorized_ids:
-            return ()
-        retriever = await self._get_retriever()
-        result = await asyncio.to_thread(
-            retriever.get_search_results,
-            query_vector=query_embedding,
-            top_k=min(limit, len(authorized_ids)),
-            filters={"canonical_id": {"$in": sorted(authorized_ids)}},
-            query_params={
-                "scope_ids": sorted(scope_ids),
-                "version_ids": sorted(document_version_ids),
-                "fact_limit": limit,
-            },
-        )
-        rows = [record.data() for record in result.records]
-        return tuple(
-            f"{row['source']} -[{row['relation_type']}]-> {row['target']} "
-            f"(source={row['chunk_id']} locator={row['locator']})"
-            for row in rows
-        )
+        return tuple(path.fact for path in paths)
 
     async def revoke_document_version(self, version_id: str) -> None:
         async with self._driver.session() as session:
@@ -211,24 +361,51 @@ class Neo4jRuntime:
                 version_id=version_id,
             )
 
+    async def reconcile_active_versions(self, version_ids: frozenset[str]) -> None:
+        """Idempotently align the rebuildable Neo4j projection with canonical PostgreSQL state."""
+
+        async with self._driver.session() as session:
+            await session.run(
+                """
+                MATCH ()-[relation:RELATED]->()
+                SET relation.active =
+                    relation.document_version_id IN $version_ids
+                    AND relation.evidence_decision = 'ELIGIBLE'
+                """,
+                version_ids=sorted(version_ids),
+            )
+
     async def _authorized_entity_ids(
         self,
         *,
         scope_ids: frozenset[str],
         document_version_ids: frozenset[str],
+        allowed_entity_types: frozenset[str] = frozenset(),
+        allowed_relation_types: frozenset[str] = frozenset(),
+        minimum_confidence: float = 0.0,
     ) -> frozenset[str]:
         async with self._driver.session() as session:
             result = await session.run(
                 """
-                MATCH (source:Entity)-[relation:RELATED]->(target:Entity)
-                WHERE relation.active = true
-                  AND relation.document_version_id IN $version_ids
-                  AND all(scope IN relation.scope_ids WHERE scope IN $scope_ids)
+            MATCH (source:Entity)-[relation:RELATED]->(target:Entity)
+            WHERE relation.active = true
+              AND relation.evidence_decision = 'ELIGIBLE'
+              AND relation.confidence >= $minimum_confidence
+              AND relation.document_version_id IN $version_ids
+              AND all(scope IN relation.scope_ids WHERE scope IN $scope_ids)
+              AND (size($allowed_relation_types) = 0 OR
+                   relation.relation_type IN $allowed_relation_types)
+              AND (size($allowed_entity_types) = 0 OR
+                   (source.entity_type IN $allowed_entity_types AND
+                    target.entity_type IN $allowed_entity_types))
                 UNWIND [source.canonical_id, target.canonical_id] AS canonical_id
                 RETURN DISTINCT canonical_id
                 """,
                 scope_ids=sorted(scope_ids),
                 version_ids=sorted(document_version_ids),
+                allowed_entity_types=sorted(allowed_entity_types),
+                allowed_relation_types=sorted(allowed_relation_types),
+                minimum_confidence=minimum_confidence,
             )
             rows = await result.data()
         return frozenset(str(row["canonical_id"]) for row in rows)
@@ -260,18 +437,30 @@ class Neo4jRuntime:
     @staticmethod
     def _retrieval_query() -> str:
         return """
-        MATCH (source:Entity)-[relation:RELATED]->(target:Entity)
-        WHERE (source = node OR target = node)
-          AND relation.active = true
+        MATCH path=(node)-[path_relations:RELATED*1..2]-(target:Entity)
+        WHERE all(relation IN path_relations WHERE
+          relation.active = true
+          AND relation.evidence_decision = 'ELIGIBLE'
+          AND relation.confidence >= $minimum_confidence
           AND relation.document_version_id IN $version_ids
           AND all(scope IN relation.scope_ids WHERE scope IN $scope_ids)
-        RETURN source.name AS source,
-               relation.relation_type AS relation_type,
-               target.name AS target,
-               relation.chunk_id AS chunk_id,
-               relation.locator AS locator,
+          AND (size($allowed_relation_types) = 0 OR
+               relation.relation_type IN $allowed_relation_types))
+          AND length(path) <= $max_hops
+          AND all(entity IN nodes(path) WHERE
+              size($allowed_entity_types) = 0 OR
+              entity.entity_type IN $allowed_entity_types)
+        WITH path, path_relations, score,
+             reduce(confidence = 1.0, relation IN path_relations |
+               confidence * relation.confidence) AS path_confidence
+        RETURN [entity IN nodes(path) | entity.name] AS nodes,
+               [relation IN path_relations | relation.relation_type] AS relations,
+               [index IN range(0, size(path_relations) - 1) |
+                 startNode(path_relations[index]) = nodes(path)[index]] AS directions,
+               [relation IN path_relations | relation.chunk_id] AS chunk_ids,
+               [relation IN path_relations | relation.locator] AS locators,
                score AS score
-        ORDER BY score DESC, relation.confidence DESC
+        ORDER BY length(path) ASC, score DESC, path_confidence DESC
         LIMIT $fact_limit
         """
 
@@ -287,6 +476,7 @@ class Neo4jRuntime:
                     "canonical_id": record.source_id,
                     "name": record.source_name,
                     "entity_type": record.source_type,
+                    "aliases": list(record.source_aliases),
                 },
                 embedding_properties={ENTITY_VECTOR_PROPERTY: list(record.source_embedding)},
             )
@@ -297,6 +487,7 @@ class Neo4jRuntime:
                     "canonical_id": record.target_id,
                     "name": record.target_name,
                     "entity_type": record.target_type,
+                    "aliases": list(record.target_aliases),
                 },
                 embedding_properties={ENTITY_VECTOR_PROPERTY: list(record.target_embedding)},
             )
@@ -306,14 +497,28 @@ class Neo4jRuntime:
                     end_node_id=record.target_id,
                     type="RELATED",
                     properties={
-                        "canonical_id": record.relation_id,
+                        # A canonical semantic relation can be supported by multiple document
+                        # versions.  Neo4j must keep each provenance edge independent so that
+                        # revoking one version cannot deactivate evidence from another.
+                        "canonical_id": ":".join(
+                            (
+                                record.relation_id,
+                                record.document_version_id,
+                                record.chunk_id,
+                            )
+                        ),
+                        "relation_id": record.relation_id,
                         "relation_type": record.relation_type,
                         "document_version_id": record.document_version_id,
+                        "source_document_id": record.source_document_id,
                         "chunk_id": record.chunk_id,
                         "locator": record.locator,
                         "scope_ids": list(record.scope_ids),
                         "generation": record.generation,
                         "confidence": record.confidence,
+                        "extraction_version": record.extraction_version,
+                        "policy_version": record.policy_version,
+                        "evidence_decision": record.evidence_decision,
                         "active": True,
                     },
                 )

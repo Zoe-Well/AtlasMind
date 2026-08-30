@@ -6,13 +6,16 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OverlayPanel } from "@/components/ui/overlay-panel";
-import { createEvaluationRun,readEvaluationRun } from "@/lib/api/client";
+import { createEvaluationRun,readEvaluationRun,readRuntimeCapabilities } from "@/lib/api/client";
 export function EvaluationWorkbench({initialRunId=""}:{initialRunId?:string}){
  const [datasetId,setDatasetId]=useState("enterprise-rag-regression"),[datasetVersion,setDatasetVersion]=useState("2026.08"),[policyVersion,setPolicyVersion]=useState("hybrid-v1"),[lookup,setLookup]=useState(initialRunId),[runId,setRunId]=useState(initialRunId),[createOpen,setCreateOpen]=useState(false);
- const run=useQuery({queryKey:["evaluation-run",runId],queryFn:()=>readEvaluationRun(runId),enabled:Boolean(runId),refetchInterval:q=>q.state.data&&["PASSED","FAILED","INVALID"].includes(q.state.data.state)?false:1000});
+ const capabilities=useQuery({queryKey:["runtime-capabilities"],queryFn:readRuntimeCapabilities});
+ const evaluationsEnabled=capabilities.data?.features.evaluations===true;
+ const run=useQuery({queryKey:["evaluation-run",runId],queryFn:()=>readEvaluationRun(runId),enabled:Boolean(runId)&&evaluationsEnabled,refetchInterval:q=>q.state.data&&["PASSED","FAILED","INVALID"].includes(q.state.data.state)?false:1000});
  const create=useMutation({mutationFn:()=>createEvaluationRun({datasetId:datasetId.trim(),datasetVersion:datasetVersion.trim(),retrievalPolicyVersion:policyVersion.trim()||undefined}),onSuccess:v=>{setRunId(v.id);setLookup(v.id);setCreateOpen(false)}});
- return <div><header className="page-topbar"><div><p className="mb-1 text-[10px] text-[#858995]">持续质量</p><h1 className="page-title">质量评估</h1></div><Button onClick={()=>setCreateOpen(true)}><Beaker className="size-4"/>新建评估</Button></header>
+ return <div><header className="page-topbar"><div><p className="mb-1 text-[10px] text-[#858995]">持续质量</p><h1 className="page-title">质量评估</h1></div><Button onClick={()=>setCreateOpen(true)} disabled={!evaluationsEnabled}><Beaker className="size-4"/>新建评估</Button></header>
  <div className="page-content"><div><p className="eyebrow">Evaluation center</p><h2 className="heading-xl">评估与发布门禁</h2><p className="mt-2 max-w-2xl text-xs leading-6 text-[#858995]">对版本化数据集运行可重复评估。任何权限泄露或确定性安全失败都会直接阻止发布。</p></div>
+ {!capabilities.isLoading&&!evaluationsEnabled?<div className="mt-6 rounded-xl bg-[#fbf2df] p-4 text-xs leading-6 text-[#8a5a17]">当前持久化运行时尚未启用评估执行器。页面不会创建或展示演示评估。</div>:null}
  <div className="mt-7 grid grid-cols-4 gap-4 max-[900px]:grid-cols-2">{["最近评估","通过率","安全失败","待复核"].map(label=><div className="panel p-5" key={label}><p className="text-[10px] text-[#858995]">{label}</p><strong className="mt-3 block text-2xl text-[#20212a]">—</strong><small className="text-[10px] text-[#a0a3ab]">列表接口待接入</small></div>)}</div>
  <section className="panel mt-6"><div className="panel-head"><div><h3 className="panel-title">评估结果</h3><p className="mt-1 text-[10px] text-[#858995]">创建评估，或按 Evaluation Run ID 读取。</p></div><div className="flex gap-2"><div className="flex h-9 items-center gap-2 rounded-[9px] border border-[#deded9] px-3"><Search className="size-3.5 text-[#858995]"/><input aria-label="评估运行 ID" value={lookup} onChange={e=>setLookup(e.target.value)} className="w-52 border-0 bg-transparent text-[11px] outline-none" placeholder="Evaluation Run ID"/></div><Button size="sm" variant="secondary" disabled={!lookup.trim()} onClick={()=>setRunId(lookup.trim())}>读取</Button></div></div>
  {run.isFetching&&!run.data?<p className="m-5 flex items-center gap-2 text-xs text-[#858995]"><LoaderCircle className="size-4 animate-spin"/>正在读取评估…</p>:null}{run.isError?<p role="alert" className="m-5 rounded-xl bg-[#faeaea] p-4 text-xs text-[#9b4040]">{run.error.message}</p>:null}

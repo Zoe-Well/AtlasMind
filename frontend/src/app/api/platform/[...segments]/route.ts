@@ -16,7 +16,8 @@ async function handle(request: Request, context: RouteContext) {
   headers.delete("content-length");
   headers.delete("host");
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
-  return backendFetch(session, `/v1/${segments.map(encodeURIComponent).join("/")}`, {
+  const query = new URL(request.url).search;
+  return backendFetch(session, `/v1/${segments.map(encodeURIComponent).join("/")}${query}`, {
     method: request.method,
     headers,
     body,
@@ -25,4 +26,5 @@ async function handle(request: Request, context: RouteContext) {
 
 export const GET = handle;
 export const POST = handle;
+export const PUT = handle;
 export const DELETE = handle;

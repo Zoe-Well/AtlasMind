@@ -23,6 +23,7 @@ ALLOWED_ATTRIBUTES = frozenset(
         "atlasmind.error.code",
     }
 )
+_provider: TracerProvider | None = None
 
 
 def safe_attributes(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -30,8 +31,12 @@ def safe_attributes(values: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def configure_telemetry(service_name: str, endpoint: str | None = None) -> TracerProvider:
+    global _provider
+    if _provider is not None:
+        return _provider
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
     if endpoint:
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
     trace.set_tracer_provider(provider)
+    _provider = provider
     return provider
