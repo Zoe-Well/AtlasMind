@@ -1,6 +1,8 @@
 """Validated process configuration with explicit secret boundaries."""
 
 from enum import StrEnum
+from typing import Literal
+from uuid import UUID
 
 from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -45,6 +47,7 @@ class Settings(BaseSettings):
     embedding_base_url: AnyHttpUrl | None = None
     embedding_api_key: SecretStr | None = None
     chat_model: str | None = None
+    chat_thinking_enabled: bool | None = None
     embedding_model: str | None = None
     model_timeout_seconds: float = Field(default=60, gt=0, le=300)
     neo4j_uri: str = "bolt://localhost:7687"
@@ -54,8 +57,19 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: AnyHttpUrl | None = None
     authorization_cache_ttl_seconds: int = Field(default=30, ge=0, le=300)
     max_query_characters: int = Field(default=16_000, ge=1, le=64_000)
+    service_jwt_secret: SecretStr | None = None
+    service_profile: Literal["customer_service", "hq"] = "customer_service"
+    service_scope_id: str = "00000000-0000-4000-8000-000000000030"
+    local_scope_id: str = "00000000-0000-4000-8000-000000000010"
+    service_management_enabled: bool = False
+
+    @field_validator("local_scope_id", "service_scope_id")
+    @classmethod
+    def canonical_scope_id(cls, value: str) -> str:
+        return str(UUID(value))
 
     @field_validator(
+        "chat_thinking_enabled",
         "model_base_url",
         "model_api_key",
         "chat_base_url",
@@ -76,6 +90,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_boundaries(self) -> Settings:
+        if self.service_management_enabled and self.local_scope_id == self.service_scope_id:
+            raise ValueError("service knowledge must have a dedicated scope")
         if self.environment == "production" and self.otel_exporter_otlp_endpoint is None:
             raise ValueError("production requires an OTLP endpoint")
         if self.environment == "production" and self.auth_mode is AuthMode.LOCAL:

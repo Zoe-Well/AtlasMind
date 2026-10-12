@@ -149,6 +149,7 @@ def create_runtime(
             chat_model=settings.resolved_chat_model,
             embedding_model=settings.resolved_embedding_model,
             timeout_seconds=settings.model_timeout_seconds,
+            thinking_enabled=settings.chat_thinking_enabled,
         )
     extractor = graph_extractor
     if extractor is None:

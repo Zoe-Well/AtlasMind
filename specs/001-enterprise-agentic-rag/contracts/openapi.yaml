@@ -834,6 +834,7 @@ components:
             graphBrowse: { type: boolean }
             approvals: { type: boolean }
             evaluations: { type: boolean }
+            serviceKnowledge: { type: boolean }
     CreateAgentRunRequest:
       type: object
       additionalProperties: false

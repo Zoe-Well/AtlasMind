@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from hashlib import sha256
 from io import BytesIO
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -679,7 +679,9 @@ class PersistentKnowledgeService:
         now = utc_now()
         version_id = uuid4()
         job_id = uuid4()
-        scope_uuids = [UUID(value) for value in sorted(scope_ids)]
+        # A replacement inherits its document's audience, never the administrator's
+        # entire grant set (which may include unrelated knowledge scopes).
+        scope_uuids = [UUID(value) for value in cast(list[str], document["knowledgeScopes"])]
         async with self._sessions() as session, session.begin():
             prior = (
                 await session.execute(
@@ -947,6 +949,25 @@ class PersistentKnowledgeService:
         graph_records: list[GraphProjectionRecord] = []
         old_version_id: str | None = None
         async with self._sessions() as session, session.begin():
+            # Serialize activation with revocation and competing ingestion jobs. Acquire
+            # the document lock before chunk/version writes (the same order as revoke).
+            document = (
+                await session.execute(
+                    text("""
+                        SELECT document.active,
+                               (SELECT generation FROM document_versions
+                                 WHERE id = document.active_version_id) AS active_generation
+                          FROM knowledge_documents document
+                         WHERE document.id = :id FOR UPDATE OF document
+                    """),
+                    {"id": claimed["document_id"]},
+                )
+            ).mappings().one()
+            if not document["active"] or (
+                document["active_generation"] is not None
+                and document["active_generation"] > claimed["generation"]
+            ):
+                raise InvalidState(details={"reason": "DOCUMENT_REVOKED_OR_SUPERSEDED"})
             for chunk, embedding in zip(chunks, embeddings, strict=True):
                 await session.execute(
                     text(
@@ -2970,12 +2991,16 @@ class PersistentKnowledgeService:
             "failure": (
                 {
                     "code": (
-                        "BUDGET_EXCEEDED"
-                        if run["degradation_reason"] in budget_reasons
+                        "TOOL_FAILED" if run["degradation_reason"] == "RETRIEVAL_FAILED"
+                        else "BUDGET_EXCEEDED" if run["degradation_reason"] in budget_reasons
                         else "INTERNAL_ERROR"
                     ),
-                    "message": "Run failed",
-                    "retryable": run["degradation_reason"] == "AGENT_TIMEOUT",
+                    "message": (
+                        "知识检索暂时失败, 请稍后重试。"
+                        if run["degradation_reason"] == "RETRIEVAL_FAILED"
+                        else "Run failed"
+                    ),
+                    "retryable": run["degradation_reason"] in {"AGENT_TIMEOUT", "RETRIEVAL_FAILED"},
                 }
                 if run["state"] in {"FAILED", "TIMED_OUT"}
                 else None

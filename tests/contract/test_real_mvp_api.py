@@ -208,6 +208,8 @@ def settings() -> Settings:
         _env_file=None,
         environment="development",
         auth_mode="local",
+        local_scope_id=LOCAL_SCOPE_ID,
+        service_management_enabled=False,
         database_url="postgresql+asyncpg://user:password@localhost:5432/atlasmind",
         object_store_endpoint="http://localhost:9000",
         object_store_access_key="local-access",
@@ -218,6 +220,31 @@ def settings() -> Settings:
         embedding_model="embedding-model",
         neo4j_password="neo4j-local",
     )
+
+
+async def test_service_audience_requires_explicit_public_upload_selection() -> None:
+    runtime = StubRuntime()
+    configured = settings().model_copy(update={"service_management_enabled": True})
+    app = create_app(settings=configured, runtime=runtime)  # type: ignore[arg-type]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://testserver",
+    ) as client:
+        for code, classification, expected in (
+            ("scope-public", "INTERNAL", 202),
+            ("scope-customer-service", "INTERNAL", 422),
+            ("scope-customer-service", "PUBLIC", 202),
+        ):
+            response = await client.post("/v1/documents", data={
+                "title": "audience test", "sourceKey": "test/audience",
+                "knowledgeScopeCodes": code,
+                "metadata": '{"classification":"' + classification + '"}',
+            }, files={"file": ("test.txt", b"test", "text/plain")})
+            assert response.status_code == expected
+            if expected == 202:
+                expected_scope = (configured.service_scope_id if code == "scope-customer-service"
+                                  else configured.local_scope_id)
+                assert runtime.knowledge.uploaded["scope_ids"] == frozenset({expected_scope})
 
 
 @pytest.mark.asyncio

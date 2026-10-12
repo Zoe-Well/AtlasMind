@@ -10,6 +10,29 @@ import pytest
 from atlasmind.infrastructure.openai_compatible import OpenAICompatibleClient
 
 
+@pytest.mark.parametrize("enabled", [None, False, True])
+async def test_explicit_thinking_mode_is_optional_and_preserves_token_budget(enabled) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["max_tokens"] == 1800
+        if enabled is None:
+            assert "thinking" not in payload
+        else:
+            assert payload["thinking"] == {"type": "enabled" if enabled else "disabled"}
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = OpenAICompatibleClient(
+            base_url="https://model.test/v1",
+            api_key="test",
+            chat_model="test",
+            embedding_model="test",
+            thinking_enabled=enabled,
+            http_client=http,
+        )
+        assert await client.complete("Extract the supplied facts") == "{}"
+
+
 @pytest.mark.asyncio
 async def test_embedding_and_structured_graph_extraction_use_configured_models() -> None:
     requests: list[tuple[str, dict[str, object], str]] = []
@@ -187,11 +210,7 @@ async def test_stream_answer_rejects_malformed_sse_payload() -> None:
 @pytest.mark.asyncio
 async def test_stream_answer_rejects_citation_outside_evidence_allowlist() -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
-        payload = {
-            "choices": [
-                {"delta": {"content": "Unsupported [SOURCE unknown-chunk]"}}
-            ]
-        }
+        payload = {"choices": [{"delta": {"content": "Unsupported [SOURCE unknown-chunk]"}}]}
         body = f"data: {json.dumps(payload)}\n\ndata: [DONE]\n\n"
         return httpx.Response(200, content=body.encode())
 
@@ -218,3 +237,28 @@ async def test_stream_answer_rejects_citation_outside_evidence_allowlist() -> No
 
 async def _completed() -> None:
     return None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_answer_without_identity_evidence_does_not_call_model(streaming: bool) -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        pytest.fail("An empty evidence set must not be answered from model knowledge")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = OpenAICompatibleClient(
+            base_url="https://models.example.test/v1",
+            api_key="test-secret",
+            chat_model="chat-model",
+            embedding_model="embedding-model",
+            http_client=http,
+        )
+        if streaming:
+            result = await client.stream_answer(
+                "介绍一下陈文帝的简历", {}, lambda _delta: _completed()
+            )
+        else:
+            result = await client.answer("介绍一下陈文帝的简历", {})
+
+    assert result.answer == "当前授权知识中没有足够证据回答该问题。"
+    assert result.citation_ids == ()

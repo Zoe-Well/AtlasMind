@@ -157,7 +157,7 @@ export function RunInspector({ runId }: { runId: string }) {
   const run = query.data;
   useEffect(() => {
     if (typeof EventSource === "undefined") return;
-    const source = new EventSource(`/api/agent-runs/${encodeURIComponent(runId)}/events`);
+    const source = new EventSource(`/api/platform/agent-runs/${encodeURIComponent(runId)}/events`);
     const receive = (message: MessageEvent<string>) => {
       try {
         const event = parseAgentEvent(JSON.parse(message.data));

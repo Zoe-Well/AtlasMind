@@ -673,8 +673,9 @@ class AdvancedRetrievalWorkflow:
         authz_revision: int,
         parent_activity_id: str = "knowledge-search",
         public_activity_writer: PublicActivityWriter | None = None,
+        policy_override: AdvancedRetrievalPolicy | None = None,
     ) -> AdvancedRetrievalResult:
-        policy = await self.load_policy()
+        policy = policy_override or await self.load_policy()
         self.registry.validate_policy(policy)
         graph_policy = await self._load_graph_policy()
         context = RetrievalWorkflowContext(

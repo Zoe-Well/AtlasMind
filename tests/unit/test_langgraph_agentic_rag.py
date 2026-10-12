@@ -405,6 +405,77 @@ async def test_duplicate_empty_tool_call_terminates_without_reexecution() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reason,warnings", [
+    ("RETRIEVAL_TIMEOUT", ()),
+    ("TIMED_OUT", ()),
+    ("NO_AUTHORIZED_EVIDENCE", ("VECTOR_RETRIEVAL_FAILED",)),
+    ("NO_AUTHORIZED_EVIDENCE", ("GRAPH_RETRIEVAL_FAILED",)),
+    ("NO_AUTHORIZED_EVIDENCE", ("BM25_RETRIEVAL_FAILED",)),
+])
+async def test_failed_retrieval_is_not_reported_as_missing_knowledge(reason, warnings) -> None:
+    async def failed(_: CapabilityRequest, __: CapabilityExecutionContext) -> CapabilityResult:
+        return CapabilityResult(status="EMPTY", reason_code=reason, warnings=warnings)
+
+    result, _ = await run_agent(
+        ScriptedModel([AgentDecision(
+            action="CALL_TOOL", tool="knowledge_search",
+            arguments={"query": "测试问题"}, reason_code="SEARCH",
+        )]),
+        {"knowledge_search": failed},
+    )
+    assert result.state is AgentRunState.FAILED
+    assert result.terminal_reason == "RETRIEVAL_FAILED"
+    assert "检索未能完成" in result.answer.answer
+    assert "稍后重试" in result.answer.answer
+    assert "没有足够证据" not in result.answer.answer
+    assert result.answer.citation_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_clean_empty_retry_clears_prior_retrieval_failure() -> None:
+    calls = 0
+
+    async def search(_: CapabilityRequest, __: CapabilityExecutionContext) -> CapabilityResult:
+        nonlocal calls
+        calls += 1
+        return CapabilityResult(
+            status="EMPTY", reason_code="NO_AUTHORIZED_EVIDENCE",
+            warnings=("VECTOR_RETRIEVAL_FAILED",) if calls == 1 else (),
+        )
+
+    result, _ = await run_agent(
+        ScriptedModel([AgentDecision(
+            action="CALL_TOOL", tool="knowledge_search", arguments={"query": query},
+            reason_code="SEARCH",
+        ) for query in ("测试问题", "重试问题")]),
+        {"knowledge_search": search},
+    )
+    assert calls == 2
+    assert result.state is AgentRunState.COMPLETED
+    assert result.terminal_reason is None
+    assert "没有足够证据" in result.answer.answer
+
+
+@pytest.mark.asyncio
+async def test_partial_retrieval_failure_preserves_valid_evidence() -> None:
+    identifier = str(uuid4())
+
+    async def search(_: CapabilityRequest, __: CapabilityExecutionContext) -> CapabilityResult:
+        return successful(identifier).model_copy(update={"warnings": ("GRAPH_RETRIEVAL_FAILED",)})
+
+    result, _ = await run_agent(
+        ScriptedModel([AgentDecision(
+            action="CALL_TOOL", tool="knowledge_search",
+            arguments={"query": "测试问题"}, reason_code="SEARCH",
+        )]),
+        {"knowledge_search": search},
+    )
+    assert result.state is AgentRunState.COMPLETED
+    assert result.answer.citation_ids == (identifier,)
+    assert result.terminal_reason is None
+
+
+@pytest.mark.asyncio
 async def test_model_cannot_inject_authorization_fields_into_tool_input() -> None:
     handler_called = False
 

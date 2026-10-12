@@ -44,20 +44,21 @@ export function ChatShell({mode,onSubmit}:ChatShellProps){
     onSuccess:(created,values)=>{setQuestion(values.query);setStreamError(null);setAgentStream(initialAgentStreamState);if(created)setRun(created);void queryClient.invalidateQueries({queryKey:["agent-runs"]});reset()},
   });
   const runId=run?.id,runState=run?.state;
+  const runTerminal=runState?terminalStates.has(runState):false;
   useEffect(()=>{
-    if(!runId||!runState||terminalStates.has(runState)||onSubmit)return;
-    const source=new EventSource(`/api/agent-runs/${encodeURIComponent(runId)}/events`);
+    if(!runId||runTerminal||onSubmit)return;
+    const source=new EventSource(`/api/platform/agent-runs/${encodeURIComponent(runId)}/events`);
     const receive=(message:MessageEvent<string>)=>{try{
       const event=parseAgentEvent(JSON.parse(message.data));
       setAgentStream(previous=>reduceAgentEvent(previous,event));
       if(event.type==="STATE_SNAPSHOT")setRun((event as unknown as {snapshot:AgentRun}).snapshot);
-      if(event.type==="RUN_FINISHED"||event.type==="RUN_ERROR"){source.close();void queryClient.invalidateQueries({queryKey:["agent-runs"]})}
+      if(event.type==="RUN_FINISHED"||event.type==="RUN_ERROR"){setStreamError(null);source.close();void queryClient.invalidateQueries({queryKey:["agent-runs"]})}
     }catch{setStreamError("运行事件格式异常，已停止实时更新。");source.close()}};
     for(const type of atlasEventTypes)source.addEventListener(type,receive as EventListener);
     source.onopen=()=>setStreamError(null);
     source.onerror=()=>setStreamError("实时连接暂时中断，正在自动恢复…");
     return()=>source.close();
-  },[runId,runState,onSubmit,queryClient]);
+  },[runId,runTerminal,onSubmit,queryClient]);
   const citations=agentStream.citations.length?agentStream.citations:(run?.answer?.citations??[]);
   const answerText=agentStream.output||run?.answer?.text;
 

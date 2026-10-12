@@ -1,4 +1,14 @@
 services:
+  api:
+    environment:
+      PYTHONPATH: /app/src
+    volumes:
+      - ./src:/app/src:ro
+  ingestion-worker:
+    environment:
+      PYTHONPATH: /app/src
+    volumes:
+      - ./src:/app/src:ro
   frontend:
     build:
       target: development

@@ -185,6 +185,7 @@ class LangGraphAgenticRAG:
             "STEP_BUDGET_EXCEEDED",
             "TOOL_BUDGET_EXCEEDED",
             "ANSWER_GENERATION_FAILED",
+            "RETRIEVAL_FAILED",
         }:
             completed_state = (
                 AgentRunState.PARTIAL if final_agent.evidence else AgentRunState.FAILED
@@ -617,7 +618,26 @@ class LangGraphAgenticRAG:
                 {"messageId": message_id},
             )
         else:
-            answer = GroundedAnswer("当前授权知识中没有足够证据回答该问题。", ())
+            last_search = next(
+                (item for item in reversed(state.get("observations", ()))
+                 if item.tool == "knowledge_search"),
+                None,
+            )
+            retrieval_failed = last_search is not None and (
+                last_search.reason_code in {"RETRIEVAL_TIMEOUT", "TIMED_OUT"}
+                or bool(set(last_search.warnings) & {
+                    "VECTOR_RETRIEVAL_FAILED", "BM25_RETRIEVAL_FAILED", "GRAPH_RETRIEVAL_FAILED",
+                })
+            )
+            if retrieval_failed:
+                answer = GroundedAnswer(
+                    "本次知识检索未能完成, 暂时无法判断资料是否充足。请稍后重试。"
+                    "本机部署时请确认 Embedding 模型已启动并完成预热。",
+                    (),
+                )
+                terminal_reason = "RETRIEVAL_FAILED"
+            else:
+                answer = GroundedAnswer("当前授权知识中没有足够证据回答该问题。", ())
         step = RunStep(
             run_id=agent.run_id,
             ordinal=len(agent.steps) + 1,
@@ -635,7 +655,7 @@ class LangGraphAgenticRAG:
             },
         )
         update: AgentGraphState = {"agent": agent.with_step(step), "answer": answer}
-        if evidence and "terminal_reason" in locals():
+        if "terminal_reason" in locals():
             update["terminal_reason"] = terminal_reason
         return update
 

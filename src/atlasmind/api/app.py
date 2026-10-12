@@ -27,7 +27,6 @@ from atlasmind.retrieval.strategy_policy import (
 )
 from atlasmind.runtime import (
     LOCAL_PRINCIPAL_ID,
-    LOCAL_SCOPE_ID,
     Runtime,
     create_runtime,
 )
@@ -77,7 +76,10 @@ async def runtime_auth_context(request: Request) -> AuthContext:
         role_codes=frozenset(
             {"local-super-admin", "knowledge-admin", "tool-approver", "auditor", "employee"}
         ),
-        scope_ids=frozenset({LOCAL_SCOPE_ID}),
+        scope_ids=frozenset(
+            {configured.local_scope_id, configured.service_scope_id}
+            if configured.service_management_enabled else {configured.local_scope_id}
+        ),
         allowed_actions=frozenset(
             {Action.DISCOVER, Action.READ, Action.CITE, Action.MANAGE, Action.AUDIT}
         ),
@@ -154,7 +156,9 @@ def create_app(
 
     def requested_scopes(values: list[str], context: AuthContext) -> frozenset[str]:
         resolved = {
-            LOCAL_SCOPE_ID if value in {"scope-public", LOCAL_SCOPE_ID} else value
+            configured.local_scope_id if value == "scope-public" else
+            configured.service_scope_id if value == "scope-customer-service"
+            and configured.service_management_enabled else value
             for value in values
         }
         if not resolved or not resolved.issubset(context.scope_ids):
@@ -185,6 +189,7 @@ def create_app(
                 "graphBrowse": True,
                 "approvals": False,
                 "evaluations": False,
+                "serviceKnowledge": configured.service_management_enabled,
             },
         }
 
@@ -201,13 +206,16 @@ def create_app(
         values = json.loads(metadata or "{}")
         if not isinstance(values, dict):
             raise ValueError("metadata must be a JSON object")
+        scopes = requested_scopes(knowledge_scope_codes, context)
+        if configured.service_scope_id in scopes and values.get("classification") != "PUBLIC":
+            raise ValueError("商户客服知识必须为已审阅的公开通用资料")
         return await dependencies.knowledge.upload(
             title=title,
             source_key=source_key,
             file_name=file.filename or "upload.bin",
             media_type=file.content_type or "application/octet-stream",
             content=await file.read(),
-            scope_ids=requested_scopes(knowledge_scope_codes, context),
+            scope_ids=scopes,
             metadata=values,
             actor_id=context.principal_id,
             idempotency_key=idempotency_key or str(uuid4()),

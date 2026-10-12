@@ -450,6 +450,7 @@ export interface components {
                 graphBrowse: boolean;
                 approvals: boolean;
                 evaluations: boolean;
+                serviceKnowledge?: boolean;
             };
         };
         /** @description Roles, subject, and knowledge scopes are intentionally absent */

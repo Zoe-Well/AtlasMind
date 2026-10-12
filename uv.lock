@@ -111,6 +111,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/20/89/e62cc37b69ad357cc8ecd6e7367f5245f523d3cbb338a66197212bdf6749/alembic-1.19.1-py3-none-any.whl", hash = "sha256:b39018cb3d9413a19cbd54cf3c02ad33998641f0538eb77413a488a21c3e14be", size = 265946, upload-time = "2026-08-08T16:32:03.153Z" },
 ]
 
+[package.optional-dependencies]
+asyncio = [
+    { name = "greenlet" },
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.5"
@@ -255,7 +260,7 @@ dependencies = [
     { name = "pypdf" },
     { name = "python-docx" },
     { name = "python-multipart" },
-    { name = "sqlalchemy" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -298,7 +303,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.0" },
     { name = "python-docx", specifier = ">=1.2" },
     { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35" },
 ]
 provides-extras = ["evaluation"]

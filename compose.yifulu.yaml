@@ -1,0 +1,45 @@
+# Optional local-only integration. Only this restricted listener joins the business network.
+services:
+  api:
+    environment:
+      ATLASMIND_LOCAL_SCOPE_ID: 00000000-0000-4000-8000-000000000020
+      ATLASMIND_SERVICE_SCOPE_ID: ${ATLASMIND_SERVICE_SCOPE_ID:-00000000-0000-4000-8000-000000000030}
+      ATLASMIND_SERVICE_MANAGEMENT_ENABLED: "true"
+  knowledge-service:
+    extends:
+      file: compose.yaml
+      service: api
+    image: atlasmind-local-backend:7203769-local
+    command: ["uvicorn", "atlasmind.api.service:create_app", "--factory", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      PYTHONPATH: /app/src
+      ATLASMIND_SERVICE_JWT_SECRET: ${ATLASMIND_SERVICE_JWT_SECRET:?Configure the service key locally}
+      ATLASMIND_SERVICE_SCOPE_ID: ${ATLASMIND_SERVICE_SCOPE_ID:-00000000-0000-4000-8000-000000000030}
+    volumes:
+      - ./src:/app/src:ro
+    ports: !reset []
+    networks: [default, yifulu-service]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/live')"]
+  hq-knowledge-service:
+    extends:
+      file: compose.yaml
+      service: api
+    image: atlasmind-local-backend:7203769-local
+    command: ["uvicorn", "atlasmind.api.service:create_app", "--factory", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      PYTHONPATH: /app/src
+      ATLASMIND_SERVICE_PROFILE: hq
+      ATLASMIND_SERVICE_JWT_SECRET: ${ATLASMIND_HQ_SERVICE_JWT_SECRET:-}
+      ATLASMIND_SERVICE_SCOPE_ID: ${ATLASMIND_HQ_SCOPE_ID:-00000000-0000-4000-8000-000000000020}
+    volumes:
+      - ./src:/app/src:ro
+    ports: !reset []
+    networks: [default, yifulu-service]
+    profiles: [hq-knowledge]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/live')"]
+networks:
+  yifulu-service:
+    external: true
+    name: yifulu-full-test_default

@@ -308,12 +308,19 @@ class AgentRunPersistence:
             }
             failure = {
                 "code": (
-                    "BUDGET_EXCEEDED"
-                    if result.terminal_reason in budget_reasons
+                    "TOOL_FAILED" if result.terminal_reason == "RETRIEVAL_FAILED"
+                    else "BUDGET_EXCEEDED" if result.terminal_reason in budget_reasons
                     else "INTERNAL_ERROR"
                 ),
-                "message": "Agent 未能在受限预算内完成可靠回答。",
-                "retryable": result.state == AgentRunState.TIMED_OUT,
+                "message": (
+                    "知识检索暂时失败, 请稍后重试。"
+                    if result.terminal_reason == "RETRIEVAL_FAILED"
+                    else "Agent 未能在受限预算内完成可靠回答。"
+                ),
+                "retryable": (
+                    result.state == AgentRunState.TIMED_OUT
+                    or result.terminal_reason == "RETRIEVAL_FAILED"
+                ),
             }
         return {
             "id": str(run_id),
