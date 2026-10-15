@@ -21,6 +21,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List conversations owned by the authenticated principal */
+        get: operations["listConversations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read persisted question and answer turns owned by the current principal */
+        get: operations["readConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agent-runs": {
         parameters: {
             query?: never;
@@ -461,16 +495,42 @@ export interface components {
              * @enum {string}
              */
             mode: "AUTO" | "SIMPLE" | "MULTI_SOURCE" | "GRAPH";
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Append to an owned conversation; omitted starts a new one. Returns 409 if another turn is active.
+             */
             conversationId?: string | null;
             responseLanguage?: string | null;
             clientContext?: {
                 locale?: string;
             };
         };
+        Conversation: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ConversationList: {
+            items: components["schemas"]["Conversation"][];
+            nextOffset: number | null;
+        };
+        ConversationDetail: {
+            conversation: components["schemas"]["Conversation"];
+            items: components["schemas"]["AgentRun"][];
+            nextBefore: number | null;
+        };
         AgentRun: {
             /** Format: uuid */
             id: string;
+            /** Format: uuid */
+            conversationId?: string | null;
+            turnIndex?: number | null;
+            /** @description Original user message; null for legacy records whose question was not saved. */
+            query?: string | null;
             /** Format: uuid */
             correlationId: string;
             traceId?: string | null;
@@ -938,6 +998,58 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
         };
     };
+    listConversations: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversations ordered by most recent submitted turn */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    readConversation: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Read turns before this ordinal; omitted returns the latest page. */
+                before?: number;
+            };
+            header?: never;
+            path: {
+                conversationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest page in chronological order, with cursor for earlier turns */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationDetail"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            404: components["responses"]["ResourceNotAvailable"];
+        };
+    };
     listAgentRuns: {
         parameters: {
             query?: {
@@ -990,6 +1102,8 @@ export interface operations {
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
+            404: components["responses"]["ResourceNotAvailable"];
+            409: components["responses"]["InvalidState"];
             429: components["responses"]["RateLimited"];
         };
     };

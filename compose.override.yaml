@@ -4,6 +4,7 @@ services:
       PYTHONPATH: /app/src
     volumes:
       - ./src:/app/src:ro
+      - ./migrations:/app/migrations:ro
   ingestion-worker:
     environment:
       PYTHONPATH: /app/src

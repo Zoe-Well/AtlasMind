@@ -44,6 +44,22 @@ async def test_hq_answer_uses_grounding_and_returns_only_selected_validated_cita
     knowledge.validate.assert_awaited_once()
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_standard_rerank_is_server_configured_and_disabled_by_default(monkeypatch, enabled):
+    knowledge, _, _ = service()
+    knowledge.standard = True
+    knowledge.runtime.settings = SimpleNamespace(service_rerank_enabled=enabled)
+    knowledge.rows = AsyncMock(return_value={})
+    workflow = SimpleNamespace(run=AsyncMock(return_value=SimpleNamespace(
+        reason_code=None, evidence=[], warnings=(), policy_version=1, metrics={}
+    )))
+    monkeypatch.setattr("atlasmind.api.service.AdvancedRetrievalWorkflow", lambda *args: workflow)
+    await ServiceKnowledge.search(knowledge, "商品上架")
+    plan = workflow.run.await_args.kwargs["fixed_plan"]
+    assert bool(plan.post_retrieval) == enabled
+    assert [item.id for item in plan.retrievers] == ["vector", "bm25"]
+
+
 async def test_business_routing_never_consumes_ordinary_document_evidence():
     knowledge, ai, _ = service("business")
     result = await knowledge.answer(HqAnswerRequest(query="比较本周商户经营"))
@@ -96,3 +112,17 @@ async def test_shared_customer_service_search_distinguishes_empty_knowledge_from
         assert error.value.status_code == 503 and error.value.detail == "RETRIEVAL_FAILED"
     else:
         assert (await ServiceKnowledge.search(knowledge, "公开客服知识"))["data"] == []
+
+
+async def test_standard_service_uses_fixed_hybrid_plan_with_existing_limits(monkeypatch):
+    knowledge, _, _ = service()
+    knowledge.standard = True
+    knowledge.rows = AsyncMock(return_value={})
+    workflow = SimpleNamespace(run=AsyncMock(return_value=SimpleNamespace(reason_code="NO_AUTHORIZED_EVIDENCE", evidence=[], warnings=(), policy_version="test")))
+    monkeypatch.setattr("atlasmind.api.service.AdvancedRetrievalWorkflow", lambda *args: workflow)
+    result = await ServiceKnowledge.search(knowledge, "商品首次上架")
+    plan = workflow.run.await_args.kwargs['fixed_plan']
+    assert [r.id for r in plan.retrievers] == ['vector','bm25']
+    assert plan.query_processing == () and plan.reason_code == 'SERVICE_STANDARD_V2'
+    assert plan.post_retrieval == ()
+    assert result['strategy'] == 'service-standard-v2' and result['elapsed_ms'] >= 0

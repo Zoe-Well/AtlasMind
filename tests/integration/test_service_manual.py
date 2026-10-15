@@ -172,3 +172,79 @@ async def test_full_document_refuses_partial_scope_visibility(fixture):
     with pytest.raises(HTTPException) as error:
         await reader.read(ManualReadRequest(document_id=ref["document_id"], view="document"))
     assert error.value.status_code == 404
+
+
+async def test_semantic_markdown_chunks_read_with_exact_quote_after_persistence(fixture):
+    from atlasmind.ingestion.chunking import DeterministicChunker
+    from atlasmind.ingestion.parsers import MarkdownParser
+
+    reader, conn, ref, _ = fixture
+    raw = (
+        "# Returns\n\n## Conditions\n\n"
+        + "Regular returns require proof. " * 100
+        + "\n\n| Type | Days |\n| --- | --- |\n| Custom | 0 |\n"
+    ).encode()
+
+    class Objects:
+        async def get_bytes(self, key):
+            assert key == "synthetic/semantic.md"
+            return raw
+
+    reader.object_store = Objects()
+    scope_ids = (
+        await conn.execute(
+            text("SELECT scope_ids FROM document_versions WHERE id=:v"), {"v": ref["version_id"]}
+        )
+    ).scalar_one()
+    generated = DeterministicChunker().chunk(
+        MarkdownParser().parse(raw),
+        document_version_id=str(ref["version_id"]),
+        scope_ids=frozenset(map(str, scope_ids)),
+        generation=1,
+    )
+    await conn.execute(
+        text("DELETE FROM knowledge_chunks WHERE document_version_id=:v"), {"v": ref["version_id"]}
+    )
+    for chunk in generated:
+        await conn.execute(
+            text(
+                "INSERT INTO knowledge_chunks"
+                "(id,document_version_id,ordinal,content,locator,scope_ids,generation) "
+                "VALUES (:id,:v,:n,:content,:locator,:scopes,1)"
+            ),
+            {
+                "id": chunk.id,
+                "v": ref["version_id"],
+                "n": chunk.ordinal,
+                "content": chunk.content,
+                "locator": chunk.locator,
+                "scopes": scope_ids,
+            },
+        )
+    await conn.execute(
+        text(
+            "UPDATE document_versions SET object_key='synthetic/semantic.md',"
+            "media_type='text/markdown',"
+            "size_bytes=:size,content_digest=:digest WHERE id=:v"
+        ),
+        {"size": len(raw), "digest": "sha256:" + sha256(raw).hexdigest(), "v": ref["version_id"]},
+    )
+    last = generated[-1]
+    paragraph = sum(len(c.content.splitlines()) for c in generated)
+    request = ManualReadRequest(
+        document_id=ref["document_id"],
+        version_id=ref["version_id"],
+        chunk_id=last.id,
+        digest=last.content_digest,
+        view="document",
+        paragraph_start=paragraph,
+        paragraph_end=paragraph,
+        quote_digest="sha256:" + sha256(last.content.splitlines()[-1].encode()).hexdigest(),
+    )
+    result = await reader.read(request)
+    assert result["format"] == "markdown"
+    assert result["highlight"] == {"start": paragraph, "end": paragraph, "mode": "precise"}
+    assert "Custom" in str(result["nodes"])
+    with pytest.raises(HTTPException) as error:
+        await reader.read(request.model_copy(update={"quote_digest": "sha256:" + "0" * 64}))
+    assert error.value.status_code == 409

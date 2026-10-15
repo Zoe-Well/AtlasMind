@@ -21,6 +21,7 @@ from atlasmind.infrastructure.openai_compatible import (
     GroundedAnswer,
     OpenAICompatibleClient,
 )
+from atlasmind.retrieval.lexical_pg import BasicMultilingualTokenizer
 from atlasmind.settings import Settings
 
 LOCAL_PRINCIPAL_ID = "00000000-0000-4000-8000-000000000001"
@@ -121,6 +122,8 @@ def create_runtime(
     ai: RealAI | None = None,
     graph_extractor: RealGraphExtractor | None = None,
 ) -> Runtime:
+    # Load the shared dictionary before serving requests, outside retrieval deadlines.
+    BasicMultilingualTokenizer().document("")
     engine = create_engine(settings.database_url.get_secret_value())
     sessions = create_session_factory(engine)
     object_store = S3ObjectStore(
@@ -148,6 +151,7 @@ def create_runtime(
             embedding_api_key=settings.resolved_embedding_api_key,
             chat_model=settings.resolved_chat_model,
             embedding_model=settings.resolved_embedding_model,
+            embedding_revision=settings.embedding_revision,
             timeout_seconds=settings.model_timeout_seconds,
             thinking_enabled=settings.chat_thinking_enabled,
         )
@@ -166,6 +170,7 @@ def create_runtime(
         model,
         extractor,
         missing_ai_capabilities=missing_capabilities,
+        expand_neighbors=settings.retrieval_expand_neighbors,
     )
     return Runtime(
         settings,

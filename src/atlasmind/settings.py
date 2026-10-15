@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     chat_model: str | None = None
     chat_thinking_enabled: bool | None = None
     embedding_model: str | None = None
+    embedding_revision: str = "1"
+    retrieval_expand_neighbors: bool = False
+    service_rerank_enabled: bool = False
     model_timeout_seconds: float = Field(default=60, gt=0, le=300)
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_username: str = "neo4j"

@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from time import perf_counter
 from typing import Protocol, TypedDict, TypeVar, cast
 from uuid import UUID
 
+import httpx
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -23,8 +24,10 @@ from atlasmind.domain.knowledge import KnowledgeChunk
 from atlasmind.graph.policy import GraphPolicy, default_graph_policy
 from atlasmind.infrastructure.ai_ports import Embedder, Reranker
 from atlasmind.infrastructure.neo4j_runtime import Neo4jRuntime, RetrievedGraphPath
+from atlasmind.ingestion.embeddings import model_profile, query_embeddings
 from atlasmind.retrieval.hybrid import RetrievalCandidate, reciprocal_rank_fusion
 from atlasmind.retrieval.lexical_pg import BasicMultilingualTokenizer
+from atlasmind.retrieval.neighbors import neighbor_rows
 from atlasmind.retrieval.reranker import rerank_candidates
 from atlasmind.retrieval.strategy_policy import (
     AdvancedRetrievalPolicy,
@@ -98,6 +101,7 @@ class AdvancedRetrievalResult:
     warnings: tuple[str, ...]
     policy_version: int
     plan_reason_code: str
+    metrics: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +116,9 @@ class RetrievalWorkflowContext:
     registry: RetrievalStrategyRegistry
     parent_activity_id: str = "knowledge-search"
     public_activity_writer: PublicActivityWriter | None = None
+    fixed_plan: RetrievalPlan | None = None
+    metrics: dict[str, int] = field(default_factory=dict)
+    expand_neighbors: bool = False
 
 
 class RetrievalWorkflowState(TypedDict, total=False):
@@ -292,7 +299,11 @@ class VectorRetrieverStrategy:
         if current.hypothetical_document:
             inputs.append(current.hypothetical_document)
         inputs = inputs[: context.policy.budget.max_embedding_calls]
-        embeddings = await context.model.embed(inputs)
+        started = perf_counter()
+        embeddings, cache_hits = await query_embeddings(context.model, inputs, context.scopes)
+        context.metrics["query_embedding_ms"] = round((perf_counter() - started) * 1000)
+        context.metrics["query_cache_hits"] = cache_hits
+        started = perf_counter()
         rankings: list[list[RetrievalCandidate]] = []
         async with context.sessions() as session:
             for index, embedding in enumerate(embeddings):
@@ -315,8 +326,15 @@ class VectorRetrieverStrategy:
                                    AND document.active = true
                                    AND document.active_version_id = version.id
                                    AND chunk.scope_ids <@ :scopes
+                                   AND cardinality(chunk.scope_ids) > 0
+                                   AND cardinality(version.scope_ids) > 0
+                                   AND version.scope_ids <@ :scopes
+                                   AND cardinality(document.scope_ids) > 0
+                                   AND document.scope_ids <@ :scopes
                                    AND vector_dims(chunk.embedding) =
                                        vector_dims(CAST(:embedding AS vector))
+                                   AND (CAST(:embedding_profile AS text) IS NULL
+                                        OR chunk.embedding_profile = :embedding_profile)
                                    AND (
                                        CAST(:metadata_filters AS jsonb) = CAST('{}' AS jsonb)
                                        OR NOT EXISTS (
@@ -340,6 +358,7 @@ class VectorRetrieverStrategy:
                             ),
                             {
                                 "embedding": _vector_literal(embedding),
+                                "embedding_profile": model_profile(context.model),
                                 "scopes": [UUID(value) for value in sorted(context.scopes)],
                                 "metadata_filters": json.dumps(
                                     current.metadata_filters or {}, ensure_ascii=False
@@ -352,7 +371,10 @@ class VectorRetrieverStrategy:
                     .all()
                 )
                 rankings.append([_candidate(row, f"vector:{index}") for row in rows])
-        return StrategyRetrievalResult(tuple(rankings), {}, len(embeddings), len(rankings))
+        context.metrics["vector_db_ms"] = round((perf_counter() - started) * 1000)
+        return StrategyRetrievalResult(
+            tuple(rankings), {}, int(cache_hits < len(inputs)), len(rankings)
+        )
 
 
 class BM25RetrieverStrategy:
@@ -369,7 +391,7 @@ class BM25RetrieverStrategy:
         rankings: list[list[RetrievalCandidate]] = []
         async with context.sessions() as session:
             for index, query in enumerate(current.query_variants):
-                normalized = " ".join(self._tokenizer.tokenize(query)) or query
+                normalized = self._tokenizer.query(query)
                 rows = (
                     (
                         await session.execute(
@@ -380,7 +402,7 @@ class BM25RetrieverStrategy:
                                        chunk.generation,
                                        ts_rank_cd(
                                            chunk.search_vector,
-                                           websearch_to_tsquery('simple', :query)
+                                           websearch_to_tsquery('simple', :query), 2
                                        ) AS score
                                   FROM knowledge_chunks chunk
                                   JOIN document_versions version
@@ -392,6 +414,11 @@ class BM25RetrieverStrategy:
                                    AND document.active = true
                                    AND document.active_version_id = version.id
                                    AND chunk.scope_ids <@ :scopes
+                                   AND cardinality(chunk.scope_ids) > 0
+                                   AND cardinality(version.scope_ids) > 0
+                                   AND version.scope_ids <@ :scopes
+                                   AND cardinality(document.scope_ids) > 0
+                                   AND document.scope_ids <@ :scopes
                                    AND chunk.search_vector @@
                                        websearch_to_tsquery('simple', :query)
                                    AND (
@@ -524,6 +551,7 @@ class RerankStrategy:
             context.model,
             limit=limit,
             timeout_ms=context.policy.budget.strategy_timeout_ms,
+            metrics=context.metrics,
         )
 
 
@@ -674,6 +702,8 @@ class AdvancedRetrievalWorkflow:
         parent_activity_id: str = "knowledge-search",
         public_activity_writer: PublicActivityWriter | None = None,
         policy_override: AdvancedRetrievalPolicy | None = None,
+        fixed_plan: RetrievalPlan | None = None,
+        expand_neighbors: bool = False,
     ) -> AdvancedRetrievalResult:
         policy = policy_override or await self.load_policy()
         self.registry.validate_policy(policy)
@@ -689,6 +719,8 @@ class AdvancedRetrievalWorkflow:
             registry=self.registry,
             parent_activity_id=parent_activity_id,
             public_activity_writer=public_activity_writer,
+            fixed_plan=fixed_plan,
+            expand_neighbors=expand_neighbors,
         )
         initial: RetrievalWorkflowState = {
             "query": query,
@@ -714,6 +746,7 @@ class AdvancedRetrievalWorkflow:
                 warnings=("RETRIEVAL_TIMEOUT",),
                 policy_version=policy.version,
                 plan_reason_code="TIMEOUT",
+                metrics=context.metrics,
             )
         evidence = final.get("evidence", ())
         plan = final["validated_plan"]
@@ -723,6 +756,7 @@ class AdvancedRetrievalWorkflow:
             warnings=final.get("warnings", ()),
             policy_version=policy.version,
             plan_reason_code=plan.reason_code,
+            metrics=context.metrics,
         )
 
     async def load_policy(self) -> AdvancedRetrievalPolicy:
@@ -788,6 +822,11 @@ class AdvancedRetrievalWorkflow:
         selected_strategies: tuple[str, ...] = (),
         degradation_code: str | None = None,
     ) -> None:
+        prefix = strategy_id or activity_suffix
+        for key, value in (metrics or {}).items():
+            context.metrics[f"{prefix}_{key}"] = value
+        if degradation_code:
+            context.metrics[f"{prefix}_degraded"] = 1
         if context.public_activity_writer is None:
             return
         content: dict[str, object] = {
@@ -840,6 +879,12 @@ class AdvancedRetrievalWorkflow:
             status="RUNNING",
             summary="正在制定受控检索计划。",
         )
+        if runtime.context.fixed_plan is not None:
+            # Internal server plan only; the same authorization/budget validation still follows.
+            runtime.context.registry.validate_plan(
+                runtime.context.fixed_plan, runtime.context.policy
+            )
+            return {"draft_plan": runtime.context.fixed_plan, "warnings": state.get("warnings", ())}
         enabled = [
             runtime.context.registry.descriptor(strategy_id).catalog_item(
                 runtime.context.policy.strategies[strategy_id]
@@ -1052,7 +1097,7 @@ class AdvancedRetrievalWorkflow:
                     },
                 )
                 return selection.id, result
-            except TimeoutError, ValueError, ValidationError, RuntimeError:
+            except TimeoutError, ValueError, ValidationError, RuntimeError, httpx.HTTPError:
                 degradation_code = f"{selection.id.upper()}_RETRIEVAL_FAILED"
                 await self._publish_activity(
                     runtime.context,
@@ -1164,15 +1209,20 @@ class AdvancedRetrievalWorkflow:
             "rerank",
             stage="RERANK",
             strategy_id="rerank",
-            status="SUCCEEDED",
-            summary="候选证据重排已经完成。",
+            status="DEGRADED" if runtime.context.metrics.get("rerank_degraded") else "SUCCEEDED",
+            summary=("重排未完成, 已使用融合顺序。"
+                     if runtime.context.metrics.get("rerank_degraded")
+                     else "候选证据重排已经完成。"),
             metrics={
                 "durationMs": self._elapsed_ms(started_at),
                 "inputCandidateCount": len(candidates),
                 "outputCandidateCount": len(ranked),
             },
         )
-        return {"ranked_candidates": ranked}
+        warnings = state.get("warnings", ())
+        if runtime.context.metrics.get("rerank_degraded"):
+            warnings = (*warnings, "RERANK_DEGRADED")
+        return {"ranked_candidates": ranked, "warnings": warnings}
 
     async def _build_evidence(
         self,
@@ -1191,6 +1241,28 @@ class AdvancedRetrievalWorkflow:
             )
         candidates = state.get("ranked_candidates") or state.get("fused_candidates", [])
         candidates = candidates[: state["limit"]]
+        if runtime.context.expand_neighbors and candidates:
+            started = perf_counter()
+            # Preserve the top three anchors; at most two independent neighboring citations.
+            anchors = candidates[:min(3, state["limit"])]
+            try:
+                rows = await asyncio.wait_for(neighbor_rows(
+                    runtime.context.sessions, anchors, runtime.context.scopes,
+                    min(2, state["limit"] - len(anchors)),
+                ), timeout=0.2)
+            except TimeoutError:
+                rows = []
+                runtime.context.metrics["neighbor_degraded"] = 1
+            selected = {item.chunk.id for item in anchors}
+            neighbors = [
+                _candidate(row, "neighbor") for row in rows if str(row["id"]) not in selected
+            ]
+            selected.update(item.chunk.id for item in neighbors)
+            candidates = (
+                anchors + neighbors + [item for item in candidates if item.chunk.id not in selected]
+            )[:state["limit"]]
+            runtime.context.metrics["neighbor_count"] = len(neighbors)
+            runtime.context.metrics["neighbor_ms"] = self._elapsed_ms(started)
         graph_paths = state.get("graph_paths", {})
         evidence = tuple(
             _chunk_evidence(

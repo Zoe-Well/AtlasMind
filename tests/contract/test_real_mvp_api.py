@@ -22,6 +22,13 @@ class StubKnowledge:
         self.event_after: list[int] = []
         self.run_state = "COMPLETED"
         self.events: tuple[PersistedAgentEvent, ...] = ()
+        self.conversations = StubConversations()
+        self.created_run: dict[str, Any] | None = None
+
+    async def start_ask(self, **values: Any) -> dict[str, object]:
+        self.created_run = values
+        return {"id": str(uuid4()), "conversationId": values["conversation_id"],
+                "query": values["query"], "state": "RUNNING"}
 
     async def upload(self, **values: Any) -> dict[str, object]:
         self.uploaded = values
@@ -188,6 +195,18 @@ class StubKnowledge:
     async def update_rag_policy(self, configuration: object, *, context: object) -> object:
         del configuration, context
         return default_advanced_retrieval_policy().model_copy(update={"version": 2})
+
+
+class StubConversations:
+    async def list(self, principal_id: str, *, limit: int, offset: int) -> dict[str, object]:
+        return {"items": [], "nextOffset": None, "principalId": principal_id,
+                "limit": limit, "offset": offset}
+
+    async def read(
+        self, conversation_id: str, principal_id: str, **values: Any,
+    ) -> dict[str, object]:
+        return {"items": [], "nextBefore": None, "id": conversation_id,
+                "principalId": principal_id, "before": values["before"], "limit": values["limit"]}
 
 
 class StubRuntime:
@@ -456,3 +475,34 @@ async def test_rag_strategy_catalog_and_versioned_policy_contract() -> None:
     assert policy.json()["canManage"] is True
     assert updated.status_code == 200
     assert updated.json()["version"] == 2
+
+
+async def test_conversation_routes_and_create_request_use_trusted_principal() -> None:
+    runtime = StubRuntime()
+    app = create_app(settings(), runtime=runtime)
+    cid = str(uuid4())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        listing = await client.get("/v1/conversations?limit=7&offset=20")
+        detail = await client.get(f"/v1/conversations/{cid}?limit=5&before=9")
+        created = await client.post(
+            "/v1/agent-runs", json={"query": "next question", "conversationId": cid},
+        )
+        malformed = await client.post(
+            "/v1/agent-runs", json={"query": "next", "conversationId": "bad-id"},
+        )
+        spoofed = await client.post(
+            "/v1/agent-runs", json={"query": "next", "principalId": str(uuid4())},
+        )
+        malformed_path = await client.get("/v1/conversations/bad-id")
+        bad_limit = await client.get("/v1/conversations?limit=101")
+    assert listing.status_code == detail.status_code == 200
+    assert listing.json()["principalId"] == "00000000-0000-4000-8000-000000000001"
+    assert listing.json()["limit"] == 7 and listing.json()["offset"] == 20
+    assert detail.json()["before"] == 9 and detail.json()["limit"] == 5
+    assert created.status_code == 202 and created.json()["conversationId"] == cid
+    assert runtime.knowledge.created_run["context"].principal_id == listing.json()["principalId"]
+    assert all(response.status_code == 422 for response in (
+        malformed, spoofed, malformed_path, bad_limit,
+    ))

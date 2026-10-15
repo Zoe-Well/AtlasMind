@@ -1,5 +1,9 @@
 # 易富路智能客服接入 AtlasMind：核查与阶段方案
 
+2026-10-15增量：构建/检索第一、二阶段已实施，客服默认vector + lexical + RRF（service-standard-v2），模型重排保留服务端恢复开关；中文分词、版本隔离、批量/向量缓存和指标见PROJECT_STATUS的当日记录。
+
+2026-10-13历史增量：客服P0/P1已使用固定混合检索（vector12 + BM25 12、总24、rerank后最多5），跳过检索规划模型；活动版本、范围、摘要和预算仍走原校验。内部 `fixed_plan` 不接受外部请求指定，总部HQ保持原策略。search增量返回 `strategy` / `elapsed_ms`，既有usage继续统计，重排仍可能调用模型。50项定向回归与两条真实客服知识链路结果见 [PROJECT_STATUS.md](PROJECT_STATUS.md)。FAQ自动发布、缓存与多跳不在本轮范围。
+
 核查日期：2026-10-11。AtlasMind 基线：`001-enterprise-agentic-rag` / `7203769ae3f7c847b5f3925d20e9ce3939565b7f`。易富路基线为核查时未提交工作区，不代表远程提交。此前完成启动与只读核查；用户已授权直接实施精简三阶段，最新结果见第 9 节。
 
 ## 1. 结论与边界
@@ -65,7 +69,7 @@
 |---|---|---|
 | 文档接入 | 原文进 S3/MinIO，版本/分块/向量入 PostgreSQL，独立 ingestion worker；TXT/MD/HTML/PDF/DOCX 解析 | 无文件夹/企业内容源持续同步；`application/real_mvp.py`、`ingestion/parsers.py`、`workers/real_ingestion.py` |
 | 版本与撤销 | 不可变版本、导入完成切换 active version；撤销先置数据库不可见，再清理图投影 | 不等同于草稿/审核/发布工作流；当前处理完成会自动激活；没有 API `If-Match`/预期编辑版本；`api/app.py`、`real_mvp.py:add_version/process_next/revoke_document` |
-| 混合检索 | pgvector + PostgreSQL FTS + Graph 回查原始 Chunk，RRF 融合；固定 LangGraph 阶段、预算和策略校验 | BM25 名称实际是 FTS `websearch_to_tsquery/ts_rank_cd`，缺少真正 BM25 与中文质量/规模验收；`retrieval/advanced_workflow.py` |
+| 混合检索 | pgvector + PostgreSQL FTS + Graph 回查原始 Chunk，RRF 融合；固定 LangGraph 阶段、预算和策略校验 | BM25 名称实际是 FTS `websearch_to_tsquery/ts_rank_cd`，已补Jieba共享分词、长度归一化和GIN；严格BM25与规模验收仍未完成；`retrieval/advanced_workflow.py` |
 | 重排 | 有候选数、超时、ID 校验和失败回退；OpenAI-compatible 生成模型 listwise 排序 | 未接入 Cross-Encoder / bge-reranker；`infrastructure/openai_compatible.py`、`retrieval/reranker.py` |
 | 图谱 | Neo4j GraphRAG 抽取、授权 seed/path、关系 provenance、活动版本回查 Chunk；检索最多两跳 | Explorer 三跳不代表检索三跳；未实现社区 Global Search、Graph seed 再触发文档扩展；图路径 metadata 未进入最终模型 Context；`infrastructure/neo4j_runtime.py`、`advanced_workflow.py` |
 | SQL 查询 | 服务器白名单 Dataset/metric/dimension；值参数化；scope 条件；`SET TRANSACTION READ ONLY`，真实 `session.execute` | 默认 Runtime 没传 Dataset，工具不注册；复用 AtlasMind 的 PostgreSQL session，不能直接连易富路 MySQL；没有数据源 CRUD、凭据治理/连接探测/独立引擎；`tools/sql_query.py`、`application/rag_capabilities.py`、`runtime.py` |

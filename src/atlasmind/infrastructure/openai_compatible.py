@@ -14,6 +14,7 @@ import httpx
 
 from atlasmind.agent.decisions import AgentDecision, AgentObservation, AgentToolSpec
 from atlasmind.infrastructure.ai_ports import RankedText
+from atlasmind.ingestion.embeddings import QueryEmbeddingCache, fingerprint, vector_literal
 
 ANSWER_PROMPT_VERSION = "grounded-identity-v2"
 ANSWER_GROUNDING_POLICY = (
@@ -88,6 +89,7 @@ class OpenAICompatibleClient:
         embedding_api_key: str | None = None,
         chat_model: str,
         embedding_model: str,
+        embedding_revision: str = "1",
         timeout_seconds: float = 60,
         thinking_enabled: bool | None = None,
         http_client: httpx.AsyncClient | None = None,
@@ -117,6 +119,11 @@ class OpenAICompatibleClient:
             if thinking_enabled is not None else {}
         )
         self._embedding_model = embedding_model
+        self.embedding_descriptor = {"model": embedding_model, "revision": embedding_revision}
+        self.embedding_profile = fingerprint(json.dumps(
+            [self._embedding_base_url, embedding_model, embedding_revision]
+        ))
+        self.query_embedding_cache = QueryEmbeddingCache()
         self._owns_client = http_client is None
         self._http = http_client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds),
@@ -143,6 +150,8 @@ class OpenAICompatibleClient:
         dimension = len(vectors[0])
         if any(len(vector) != dimension for vector in vectors):
             raise ValueError("MODEL_EMBEDDING_DIMENSION_INCONSISTENT")
+        for vector in vectors:
+            vector_literal(vector)
         return vectors
 
     async def extract_graph(self, content: str, *, locator: str) -> GraphExtraction:

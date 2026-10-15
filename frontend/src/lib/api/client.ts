@@ -23,6 +23,8 @@ export type GraphPolicyUpdate = components["schemas"]["GraphPolicyUpdate"];
 export type GraphPath = components["schemas"]["GraphPath"];
 export type GraphEntityMergeResult = components["schemas"]["GraphEntityMergeResult"];
 export type AgentRunList = components["schemas"]["AgentRunList"];
+export type ConversationList = components["schemas"]["ConversationList"];
+export type ConversationDetail = components["schemas"]["ConversationDetail"];
 export type DocumentList = components["schemas"]["DocumentList"];
 export type DocumentVersion = components["schemas"]["DocumentVersion"];
 export type DocumentVersionList = components["schemas"]["DocumentVersionList"];
@@ -36,6 +38,7 @@ const createRunInputSchema = z
   .object({
     query: z.string().trim().min(1).max(16_000),
     mode: modeSchema.optional(),
+    conversationId: z.string().uuid().optional(),
   })
   .strict();
 
@@ -51,9 +54,10 @@ export class PlatformApiError extends Error {
   }
 }
 
-export function buildAgentRunPayload(input: { query: string; mode?: AgentMode }) {
+export function buildAgentRunPayload(input: { query: string; mode?: AgentMode; conversationId?: string }) {
   const value = createRunInputSchema.parse(input);
-  return { query: value.query, mode: value.mode ?? ("AUTO" as const) };
+  return { query: value.query, mode: value.mode ?? ("AUTO" as const),
+    ...(value.conversationId ? { conversationId: value.conversationId } : {}) };
 }
 
 async function platformRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -84,11 +88,11 @@ export function readRuntimeCapabilities(): Promise<RuntimeCapabilities> {
   return platformRequest("capabilities");
 }
 
-export async function createAgentRun(query: string, mode: AgentMode = "AUTO"): Promise<AgentRun> {
+export async function createAgentRun(query: string, mode: AgentMode = "AUTO", conversationId?: string): Promise<AgentRun> {
   const response = await fetch("/api/agent-runs", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(buildAgentRunPayload({ query, mode })),
+    body: JSON.stringify(buildAgentRunPayload({ query, mode, conversationId })),
   });
   if (!response.ok) {
     const problem = (await response.json().catch(() => ({}))) as PlatformProblem;
@@ -111,6 +115,14 @@ export async function readAgentRun(runId: string): Promise<AgentRun> {
 
 export function listAgentRuns(limit = 50): Promise<AgentRunList> {
   return platformRequest(`agent-runs?limit=${encodeURIComponent(String(limit))}`);
+}
+
+export function listConversations(offset = 0): Promise<ConversationList> {
+  return platformRequest(`conversations?limit=20&offset=${offset}`);
+}
+
+export function readConversation(id: string, before?: number): Promise<ConversationDetail> {
+  return platformRequest(`conversations/${encodeURIComponent(id)}?limit=50${before ? `&before=${before}` : ""}`);
 }
 
 export function uploadDocument(formData: FormData): Promise<DocumentUploadResult> {

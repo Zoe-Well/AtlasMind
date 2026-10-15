@@ -38,12 +38,15 @@ def candidate(identifier: str, score: float) -> RetrievalCandidate:
 
 async def test_invalid_reranker_response_falls_back_to_rrf_order() -> None:
     candidates = [candidate("chunk-a", 0.9), candidate("chunk-b", 0.8)]
+    metrics = {}
     ranked = await rerank_candidates(
         "question",
         candidates,
         InvalidReranker(),
         limit=2,
         timeout_ms=100,
+        metrics=metrics,
     )
 
     assert [item.chunk.id for item in ranked] == ["chunk-a", "chunk-b"]
+    assert metrics == {"rerank_degraded": 1, "rerank_invalid_response": 1}

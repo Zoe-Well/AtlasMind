@@ -8,6 +8,8 @@ import { ChatShell } from "@/components/chat/chat-shell";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { RunInspector } from "@/components/runs/run-inspector";
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
+
 const server = setupServer();
 const runId = "00000000-0000-4000-8000-000000000201";
 const queuedRun = {
@@ -57,6 +59,32 @@ afterEach(() => { server.resetHandlers(); vi.unstubAllGlobals(); });
 afterAll(() => server.close());
 
 describe("Agent event connections", () => {
+  it("reopens a running conversation, resumes its stream and unlocks the next turn", async () => {
+    const conversationId="00000000-0000-4000-8000-000000000301";
+    const restored={...queuedRun,query:"恢复中的原问题",conversationId,turnIndex:1};
+    let current: Record<string, unknown>=restored;
+    server.use(
+      http.get(`/api/platform/conversations/${conversationId}`,()=>HttpResponse.json({
+        conversation:{id:conversationId,title:"进行中的对话",createdAt:queuedRun.createdAt,updatedAt:queuedRun.createdAt},
+        items:[restored],nextBefore:null,
+      })),
+      http.get(`/api/agent-runs/${runId}`,()=>HttpResponse.json(current)),
+    );
+    const view=render(<QueryProvider><ChatShell mode="local" conversationId={conversationId}/></QueryProvider>);
+    expect(await screen.findByText("恢复中的原问题")).toBeVisible();
+    expect(screen.getByRole("button",{name:"发送问题"})).toBeDisabled();
+    await waitFor(()=>expect(TestEventSource.instances).toHaveLength(1));
+    current={...restored,state:"COMPLETED",answer:{text:"恢复后的完整回答",confidence:"MEDIUM",evidenceStatus:"INSUFFICIENT",citations:[]}};
+    act(()=>{
+      TestEventSource.instances[0].emit("STATE_SNAPSHOT",1,{snapshot:current});
+      TestEventSource.instances[0].emit("RUN_FINISHED",2,{threadId:runId,runId});
+    });
+    expect(await screen.findByText("恢复后的完整回答")).toBeVisible();
+    await waitFor(()=>expect(screen.getByRole("button",{name:"发送问题"})).toBeEnabled());
+    view.unmount();
+    expect(TestEventSource.instances[0].close).toHaveBeenCalled();
+  });
+
   it("keeps the authenticated stream through running snapshots and reconnects until completion", async () => {
     render(<QueryProvider><ChatShell mode="local" /></QueryProvider>);
     const user = userEvent.setup();

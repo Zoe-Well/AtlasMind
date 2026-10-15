@@ -6,7 +6,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 最后更新 | 2026-10-12 |
+| 最后更新 | 2026-10-15 |
 | 基线分支 | `001-enterprise-agentic-rag` |
 | 基线提交 | `7203769ae3f7c847b5f3925d20e9ce3939565b7f`（本轮改动前的提交基线） |
 | 当前阶段 | 真实业务链路型 MVP；尚未生产就绪 |
@@ -14,6 +14,57 @@
 | 配套规划 | [NEXT_STEPS.md](NEXT_STEPS.md) |
 
 ## 当前结论
+
+### 2026-10-15 构建与检索第一、第二阶段
+
+- 共用 PostgreSQL/pgvector 链路已统一入库/查询 Jieba 0.42.1 搜索分词，包含易富路业务词；查询转义为 OR 操作数，FTS 按文档长度归一化排序。迁移 `0017` 增加活动块 GIN 索引，仍是 PostgreSQL FTS，不是严格 BM25。
+- 新入库保存 parser/chunker/lexical 版本、模型身份、维度及构建计数/耗时。向量身份由 endpoint/model/显式 revision 哈希组成；生产向量检索同时校验身份与维度。模型同名别名换权重时必须更新 `ATLASMIND_EMBEDDING_REVISION` 并重建，不会自动识别供应商静默变更。
+- 文档 Embedding 串行按最多16条/12000字符分批；完全相同文本按模型与实际 scope 集合复用，只有失败的临时网络/429/指定5xx批次重试一次。持久缓存只有文本摘要与向量，不能作为证据返回；当前没有自动淘汰机制。查询向量使用进程内60秒/128条缓存，按模型、scope和原查询隔离，结果和答案不缓存，每次重新检查活动版本与授权。
+- 工作流返回分段耗时、候选数、查询向量缓存命中与降级指标，重排失败区分超时、无效返回、传输错误。易富路仅把白名单数值写入既有内部来源快照，不增加终端用户文案。
+- 客服标准策略升级 `service-standard-v2`：vector12 + lexical12 → RRF24 → 最多5条，默认不调用模型重排；`ATLASMIND_SERVICE_RERANK_ENABLED=true` 可恢复对照。AtlasMind 企业/HQ 的规划策略不随该客服开关改变；查询改写、HyDE、独立 reranker 与严格 BM25 未新增启用。
+- 有界邻块扩展已实现：最多2块、保留前3个主命中、同有效版本/章节/完整授权、相邻 ordinal、独立摘要和引用，额外查询最多200ms。默认 `ATLASMIND_RETRIEVAL_EXPAND_NEIGHBORS=false`；旧文档章节未知时不猜测，需经原文件新版本解析和质量对照后开启。
+
+本机已备份数据库至 `.data/backups/retrieval-20261015-114805.dump`，应用0017，并对 scope020/030 的12个活动文档、20块重算向量和分词索引；原块ID、正文、定位和引用摘要保留。此次为新增 Jieba 依赖构建了一次共享后端镜像，再重新创建4个既有后端服务，均通过健康检查；数据卷、前端与业务开关保留。旧文档未重新解析，原 parser/chunker 标记为 legacy-unknown。
+
+真实模型对照使用原15问及新增15条详细规则问法，覆盖当前scope030的9文档/15块：向量预期标题Hit@5为26/30，关键词29/30，混合27/30；混合MRR 0.776、中位170.5ms，模型重排中位2142.5ms且30/30降级、排序无收益，因此客服默认关闭模型重排。30次同问题重查均命中查询向量缓存。报告 `.data/retrieval-comparison-normalized-20261015.json`；初次未归一化报告 `.data/retrieval-comparison-20261015.json` 保留。指标是指定来源标题的检索代理指标，不等于答案正确率；知识源有内容重复，尚有未命中样本，不能宣称召回率或客服端到端性能全面通过。邻块对照在旧语料上没有可扩展章节，不能证明其质量收益。
+
+验证入口 `scripts/Test-YifuluMvp.ps1 -Retrieval` 最终113项通过，覆盖中文重建、同维度模型隔离、维度改变拒绝写缓存、scope/活动版本与查询缓存失效、邻块和服务引用；最初1项旧策略V1断言失败，随策略V2更新后复验通过。另已在新后端镜像通过102项单元回归（与定向套件有重叠）。PHP数值指标白名单/类型/上限/旧响应兼容检查通过。运行中客服接口两次均HTTP200、有效引用校验通过；首次225ms/1次Embedding，重复34ms/0次模型调用，未认证401，证据`.data/retrieval-live-smoke-20261015.jsonl`。该smoke使用合成服务声明进行只读查询，无商户任务/消息写入。没有浏览器或UI验收，没有提交代码。
+
+### 2026-10-15 共用文档解析与引用兼容
+
+AtlasMind 入库解析器同时供企业知识和易富路客服知识使用。本轮复用 markdown-it-py、BeautifulSoup、python-docx、pypdf，无新增运行依赖和数据迁移：
+
+- Markdown 保留完整行内文本、章节路径、列表顺序和表格列关系；TXT 支持 UTF-8 BOM，合并软换行，以空行、明确标题、列表和显式问答组织语义块。普通相邻问答在长度预算内不拆开。
+- DOCX 按原顺序提取段落、标题、列表和表格，读取嵌套单元格内容。已声明表头的表格按列名序列化；未声明表头的表格保留首行和列位置，不猜测键值表的表头。保留表号与行号。
+- 文字 PDF 使用 pypdf layout 文本；页边缘坐标参与重复页眉页脚清理，保留原始页号、解析文本块/分栏块及行定位，分栏数据块携带首行上下文。保留同名正文；空白页不改变后续页号。无可提取文字且含图片的页面报 `PDF_OCR_REQUIRED`，不把不完整文本当成成功。没有引入 OCR 或通用复杂表格/多栏阅读顺序识别。
+- 分块按章节和来源边界组织，超长语义单元按句、词、字符依次切分，连同上下文硬限制为 1500 字符/4500 UTF-8 字节。这是字符/字节预算，不宣称与任意模型的 tokenizer 精确等价。章节/来源上下文计入规范段落及摘要，公共 `paragraph=N-M` 引用和授权字段保持不变。
+- 新版 Markdown 手册节点由相同解析/分块结果生成，并与实际持久化正文完全核对；旧版继续使用原结构恢复逻辑，不改写旧块。新树只输出白名单标签和文本，不返回原始 HTML 属性或活动 URL。
+
+已通过隔离 PostgreSQL 的 79 项定向回归（解析、入库、手册精确引用、换版/撤销和服务权限，包含 Markdown 编号列表及内嵌 HTML 文本保留用例），改动文件的 Ruff 与 PowerShell 入口语法检查通过。临时测试数据库已删除，业务资料未重写。已有 LangSmith/Neo4j 弃用警告未在本轮扩大处理。未执行 UI 验收或真实业务语料的语义质量评测。
+
+现有文档不自动重解析；从原文档“上传新版本”入口重新处理后才采用新结果，旧版待新版本成功激活才替换。复测入口 `scripts/Test-YifuluMvp.ps1 -Parsing` 使用隔离数据库并自动清理。常驻源码重载入口 `scripts/Start-YifuluMvp.ps1 -ReloadParsingRuntime` 先验证当前工作区挂载与无排队/执行中的入库、问答任务，再重启已运行的 API、入库 Worker 和知识监听器，不启用新 profile、不改变开关、不构建镜像。使用说明见 WINDOWS_RESTART_RUNBOOK。
+
+本机已通过上述入口重启 API、ingestion-worker、knowledge-service、hq-knowledge-service；三个 HTTP 服务存活检查返回 200，Worker 在运行且挂载解析器内存 smoke 通过。无镜像构建、无业务文档重解析；健康检查不替代真实文档问答或 UI 验收。
+
+### 2026-10-13 AtlasMind 完整对话记录
+
+侧栏历史入口现使用会话列表并打开 `/chat/{conversationId}`，按轮次展示原问题、持久化回答、状态、来源与独立运行详情；支持新建、继续追加、刷新恢复和加载更早记录。复用现有聊天组件、TanStack Query 和 AG-UI，未引入新依赖。进行中的会话重开后恢复 SSE，并通过状态轮询兜底；同一会话已有运行或等待审批时禁止重叠提交。
+
+迁移 `0016` 新增 `conversations`，在 `agent_runs` 增加 `conversation_id`、`turn_index`、`query_text`；每轮答案继续以原运行记录为事实源，避免双写。新问题原文以受控数据库文本保存，用户身份来自服务端；会话行锁、轮次唯一约束和复合归属外键保护追加与归属。新增会话列表/详情 API，原创建接口增量接受可选 `conversationId`，原运行接口增量返回会话编号、轮次与问题；不传编号仍创建新会话。跨用户与不存在的会话均返回 404，重叠提交返回 409。
+
+验证：独立 PostgreSQL 上 10 项集成测试、14 项后端接口/能力回归，共 24 项通过；前端问答、历史、来源、客户端和事件回归 21 项通过；TypeScript、定向 ESLint 和 Ruff 检查通过。覆盖旧记录迁移、服务实例重建、分页、跨用户读取/追加/SSE 拒绝、数据库归属约束、失败/超时/取消后追加，以及前端重开在途运行。未执行全项目回归或新的 RAG 语义质量评测；原有 Neo4j 依赖弃用警告仍存在。
+
+本机已先备份数据库，再迁移原有 14 条运行记录为独立旧会话，原回答保留、问题明确标注未保存；不根据摘要猜测问题或拼接旧会话。真实浏览器经 3001 登录，完成同一新会话两次真实模型问答（均 COMPLETED）、刷新恢复、新建清空、历史重开与逐轮运行详情访问，未出现浏览器运行错误；容器重新创建后仍可读取两轮，未登录会话列表返回 401。开发 Compose 已补挂迁移目录，避免 API 自动迁移时仍读取镜像内旧脚本；启动恢复说明见 WINDOWS_RESTART_RUNBOOK。
+
+边界：本次持久化和展示问答历史，模型仍按每轮问题独立检索，不自动把历史回答写入 Prompt/Memory；旧问题无法从哈希恢复。历史来源沿用当前运行读取规则，完整的保留/删除策略及来源撤权复核继续服从既有上线门禁。
+
+### 2026-10-13 易富路客服标准检索
+
+客服知识服务（含共享scope030的商户助手）复用既有AdvancedRetrievalWorkflow，采用服务端固定vector + BM25 + rerank，绕过模型规划；不启用扩写、HyDE或图多跳。单路候选12、总候选24、最终5，沿用6秒预算和原授权/活动版本/摘要复核。总部HQ监听器保留原策略。检索响应增量提供strategy、elapsed_ms与既有用量统计，不修改调用方query或引用Contract。
+
+检索策略、固定计划零规划调用、服务用途与授权等定向50项测试通过（原依赖弃用警告保留）；没有重复执行全量存储套件。易富路真实HTTP run919首次上架回复及段落引用通过：知识服务1365ms、1次重排生成和1次Embedding；run920无依据费用承诺1256ms、最终交总部人工核实。两者Agent端均2次模型调用，端到端45/42秒；这些有限样本不是P95或全量召回率证明。慢点主要留在易富路Agent/PHP接口往返，不能宣称整体延迟已解决。
+
+使用既有 `Start-YifuluMvp.ps1 -ReloadKnowledgeService` 重载源码挂载的知识监听器，无镜像构建、依赖变更、数据迁移或提交。配套实现和验证见易富路 `changes/active/ai-assistant-service/状态.md`；页面效果仍待用户验收。
 
 ### 2026-10-12 两项目提交前定向复查
 
@@ -197,7 +248,7 @@ AtlasMind 已闭合单企业知识库的核心真实链路：本地超级管理�
 - 2026-08-28 对运行中策略接口的只读核对确认：Graph、Vector、BM25（实际为 PostgreSQL FTS）、Fusion、Rerank 当前均启用，Query Rewrite、Multi-Query、HyDE、Self-Query 当前均关闭。`AUTO` 模式下 Graph 只是 Planner 可选择的内部 Strategy，并非每次问答强制执行；显式 Graph 模式的确定性安全回退计划会包含 Graph。
 - 当前 GraphRAG 实际链路为：用户问题进入 Retrieval Planner，经 Plan Validation 后，对规范化问题生成 Embedding，以名称/Alias 与向量相似度寻找最多 8 个 Seed Entity；随后在当前身份 scope、活动文档版本、实体/关系白名单及关系置信度不低于 0.70 的约束下执行局部图扩展，最多保留 40 个节点、24 条路径，并通过 relation provenance 回溯最多 24 个仍活动、可搜索且已授权的 PostgreSQL 原始 Chunk。Graph Chunk 与 Vector、PostgreSQL FTS 候选统一进入 RRF Fusion 和按需 Rerank，最终 Evidence、LLM 回答与引用仍以原始 Chunk 为准，图关系不能单独作为回答事实。
 - GraphRAG 检索当前硬限制为 1～2 hop：运行中 Graph Policy 为 `maxHops=2`，API 模型允许范围也是 1～2，Neo4j Cypher 使用 `RELATED*1..2` 并再次按 `max_hops` 限制，因此不会检索三跳路径，也不保证每次必须走满二跳。Graph Explorer 的 1～3 hop 是独立的授权可视化探索能力，不代表 GraphRAG 检索支持三跳。
-- 当前名为 `BM25` 的 Retriever 已能召回活动且可搜索、属于当前授权范围的原始 Chunk，但底层使用 PostgreSQL Full Text Search：导入时以 `to_tsvector('simple', content)` 生成 `search_vector`，查询时通过 `websearch_to_tsquery('simple', query)` 匹配并以 `ts_rank_cd` 排序。它不是 Okapi BM25；当前迁移也未为 `search_vector` 建立 GIN/GiST 全文索引，中文仅使用基础查询预处理，因此不应把当前能力描述为“真正 BM25 已接入”。
+- 当前名为 `BM25` 的 Retriever 已能召回活动且可搜索、属于当前授权范围的原始 Chunk，但底层使用 PostgreSQL Full Text Search：导入和查询共用Jieba分词，`websearch_to_tsquery`匹配并以带长度归一化的`ts_rank_cd`排序；0017提供活动块GIN索引。它不是Okapi BM25，不应描述为“真正BM25已接入”。
 - Rerank 阶段、候选预算、超时、结果 ID 校验及失败后回退 Fusion 顺序均已实现；当前生产适配器把有限候选交给配置的 DeepSeek Chat 模型执行 listwise 排序。项目尚未接入 Cross-Encoder、`bge-reranker` 或独立 Reranker 服务，因此不应把当前能力描述为“Cross-Encoder Rerank 已实现”。
 - 代码调用链核查确认，当前文档检索不是只返回 ID：Vector 与名为 `BM25` 的 PostgreSQL FTS Strategy 都直接查询 `knowledge_chunks`，返回包含 `chunk_id`、`document_version_id`、原始 `content`、`locator`、scope 和 score 的 `RetrievalCandidate(KnowledgeChunk)`；Fusion/Rerank 继续复用同一个 Chunk 对象，构建 Evidence 时不再重复查询文档。当前所谓 Hybrid 是多路 Strategy 结果的 RRF Fusion，不是独立 Hybrid Retriever；`PersistentKnowledgeService._retrieve()` 中旧的单 SQL 混合评分函数当前没有调用者。
 - Graph Retriever 先从 Neo4j 返回 Entity、Relation、Direction 以及关系对应的 `chunk_id`/`locator` Path。Neo4j 关系保存 `source_document_id`、`document_version_id`、`chunk_id`、locator、scope、generation、confidence 和抽取/策略版本；随后 Workflow 依据 Path provenance 从 PostgreSQL 回查仍为活动、可搜索且已授权的原始 Chunk，把它们作为 `method="graph"` 的文档候选参与统一 Fusion/Rerank。Graph 因此已是辅助召回，最终引用仍绑定原始 Chunk；但当前没有把 Graph 命中的实体作为新 Query 再触发 Vector/PostgreSQL FTS 扩展检索。
@@ -307,7 +358,7 @@ Knowledge Graph Explorer 增量验证（2026-08-27）：
 7. 当前 LangGraph 循环为同步有界执行，尚未接入 Checkpointer、异步恢复或独立 Agent Worker；长任务恢复能力尚未验收。
 8. Advanced RAG 的 OpenAPI 生成类型尚未刷新；2026-10-11 当前工作区前端 TypeScript 检查通过，组件测试、全量 Vitest、ESLint 和生产构建本次未执行。历史真实问答已验证外层仅一次 `knowledge_search`，但内部 Graph Strategy 选择准确率和带 graphPaths 的新 Workflow 仍需版本化数据集复验。
 9. SSE 事件持久化、回放、前端消费、详细 Retrieval Activity 和终态竞态收尾已进入代码并完成针对性验证，但全量前端、容器、断线恢复和真实浏览器验收按用户要求留待后续自行执行。
-10. 当前 `BM25` Strategy 的名称与实际 PostgreSQL FTS 实现不完全一致，且全文搜索向量缺少专用索引；真实 BM25 引擎、中文分词质量及规模性能尚未实现和验收。
+10. 当前 `BM25` Strategy 的名称与实际 PostgreSQL FTS 实现不完全一致，已有共享中文分词和GIN索引；严格BM25、广泛语义质量及规模性能尚未实现和验收。
 11. 当前 Rerank 是 DeepSeek listwise LLM 排序，不是 Cross-Encoder；`bge-reranker` 的模型选择、服务方式、批处理、超时降级、资源规格和质量收益尚未实现和验收。
 12. 当前 Evidence Pool 能跨 Tool 累积证据，但没有类型化 Context Builder；Graph Path 与来源 metadata 在 Compose 前被丢弃，Prompt 又把全部来源描述为“original document sources”，与 Structured Evidence 的真实类型不一致。
 13. 多源 Tool 调用依赖外层 Agent 逐步重新规划，只支持串行调用；没有确定性、预算受控的跨源 DAG，也没有 SQL/Graph 输出到后续检索输入的 typed binding，不能宣称 `SQL → Hybrid` 或 `Graph → Hybrid` 已实现。

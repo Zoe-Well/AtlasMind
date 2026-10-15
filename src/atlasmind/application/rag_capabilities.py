@@ -57,8 +57,10 @@ class AgentRAGCapabilities:
         graph: Neo4jRuntime,
         *,
         structured_datasets: tuple[StructuredDataset, ...] = (),
+        expand_neighbors: bool = False,
     ) -> None:
         self._sessions = sessions
+        self._expand_neighbors = expand_neighbors
         self._structured_datasets = structured_datasets
         self._structured_compiler = StructuredQueryCompiler(structured_datasets)
         self._retrieval_workflow = AdvancedRetrievalWorkflow(sessions, model, graph)
@@ -134,6 +136,7 @@ class AgentRAGCapabilities:
             authz_revision=self._authz_revision(request),
             parent_activity_id=request.step_id,
             public_activity_writer=context.public_activity_writer,
+            expand_neighbors=self._expand_neighbors,
         )
         return CapabilityResult(
             status="SUCCEEDED" if result.evidence else "EMPTY",

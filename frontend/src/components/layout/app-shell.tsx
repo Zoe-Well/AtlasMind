@@ -1,12 +1,12 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Activity, Beaker, ChevronDown, Database, GitFork, LockKeyhole, LogOut, MessageSquareText, Network, Plus, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import type { PublicSession } from "@/lib/auth/session";
-import { listAgentRuns } from "@/lib/api/client";
+import { listConversations } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
 const primaryNavigation = [
@@ -25,7 +25,7 @@ const operationNavigation = [
 function NavGroup({ items }: { items: typeof primaryNavigation }) {
   const pathname = usePathname();
   return <nav className="grid gap-1" aria-label="主要功能">{items.map((item) => {
-    const active = pathname === item.href || (item.href !== "/chat" && pathname.startsWith(`${item.href}/`));
+    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
     return <Link key={item.href} href={item.href} className={cn("flex min-h-10 items-center gap-3 rounded-[10px] px-3 text-[13px] font-medium text-[#555964] transition-colors hover:bg-[#e7e7e2] hover:text-[#20212a]", active && "bg-[#e1e1dc] font-semibold text-[#20212a]")}>
       <item.icon className={cn("size-[17px] stroke-[1.8]", active && "text-[#4d55ca]")} />
       <span>{item.label}</span>
@@ -35,7 +35,11 @@ function NavGroup({ items }: { items: typeof primaryNavigation }) {
 }
 
 export function AppShell({ session, children }: { session: PublicSession; children: React.ReactNode }) {
-  const history = useQuery({ queryKey: ["agent-runs", "sidebar"], queryFn: () => listAgentRuns(8), refetchInterval: 10000 });
+  const pathname = usePathname();
+  const history = useInfiniteQuery({ queryKey: ["conversations"],
+    queryFn: ({pageParam}) => listConversations(pageParam), initialPageParam: 0,
+    getNextPageParam: page => page.nextOffset ?? undefined, refetchInterval: 10000 });
+  const conversations = history.data?.pages.flatMap(page=>page.items) ?? [];
   return <div className="app-frame">
     <aside className="app-sidebar">
       <Link href="/chat" className="flex items-center gap-3 px-2" aria-label="AtlasMind 首页">
@@ -50,9 +54,10 @@ export function AppShell({ session, children }: { session: PublicSession; childr
       <p className="sidebar-label">运营与治理</p><NavGroup items={operationNavigation} />
       <p className="sidebar-label history-heading">历史对话</p>
       <div className="min-h-0 overflow-auto">
-        {history.data?.items.map((run)=><Link key={run.id} href={`/runs/${run.id}`} className="mb-1 block rounded-[9px] px-3 py-2.5 hover:bg-[#e5e5e0]"><span className="block truncate text-xs text-[#20212a]">{run.answer?.text.slice(0,28)??`${run.taskType??"SIMPLE"} 知识问答`}</span><span className="mt-1 block text-[9px] text-[#858995]">{new Date(run.createdAt).toLocaleString("zh-CN")}</span></Link>)}
+        {conversations.map((conversation)=><Link key={conversation.id} href={`/chat/${conversation.id}`} aria-current={pathname===`/chat/${conversation.id}`?"page":undefined} className={cn("mb-1 block rounded-[9px] px-3 py-2.5 hover:bg-[#e5e5e0]",pathname===`/chat/${conversation.id}`&&"bg-[#e1e1dc]")}><span className="block truncate text-xs text-[#20212a]">{conversation.title}</span><span className="mt-1 block text-[9px] text-[#858995]">{new Date(conversation.updatedAt).toLocaleString("zh-CN")}</span></Link>)}
         {history.isLoading?<p className="px-3 py-2 text-[10px] text-[#858995]">正在加载真实记录…</p>:null}
-        {history.data&&!history.data.items.length?<p className="px-3 py-2 text-[10px] leading-5 text-[#858995]">还没有历史问答</p>:null}
+        {history.data&&!conversations.length?<p className="px-3 py-2 text-[10px] leading-5 text-[#858995]">还没有历史问答</p>:null}
+        {history.hasNextPage?<button type="button" disabled={history.isFetchingNextPage} onClick={()=>void history.fetchNextPage()} className="px-3 py-2 text-[10px] text-[#4d55ca]">{history.isFetchingNextPage?"正在加载…":"更多历史对话"}</button>:null}
         {history.error?<p className="px-3 py-2 text-[10px] leading-5 text-[#9b4040]">历史记录暂时无法读取</p>:null}
       </div>
       <div className="mt-auto flex items-center gap-3 rounded-xl bg-[#e8e8e4] p-2.5">

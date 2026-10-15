@@ -25,7 +25,9 @@ from atlasmind.infrastructure.database import create_session_factory
 from atlasmind.infrastructure.openai_compatible import GroundedAnswer
 from atlasmind.retrieval.advanced_workflow import AdvancedRetrievalWorkflow, RetrievalModel
 from atlasmind.retrieval.strategy_policy import (
+    RetrievalPlan,
     RetrievalRuntimeBudget,
+    StrategySelection,
     default_advanced_retrieval_policy,
 )
 from atlasmind.runtime import Runtime, create_runtime
@@ -44,6 +46,8 @@ class MeteredModel:
 
     def __init__(self, model: RetrievalModel, *, chat_limit: int = 2) -> None:
         self.model = model
+        self.embedding_profile = getattr(model, "embedding_profile", None)
+        self.query_embedding_cache = getattr(model, "query_embedding_cache", None)
         self.chat_limit = chat_limit
         counts = current_usage.get()
         self.counts = counts if counts is not None else {}
@@ -119,11 +123,14 @@ class HqKnowledgeAPI(KnowledgeAPI, Protocol):
 
 
 class ServiceKnowledge:
-    def __init__(self, runtime: Runtime, scope: str) -> None:
+    def __init__(self, runtime: Runtime, scope: str, *, standard: bool = False) -> None:
         self.runtime = runtime
+        self.standard = standard
         self.scopes = frozenset({str(UUID(scope))})
         self.sessions = create_session_factory(runtime.engine)
-        self.manual = ManualReader(self.sessions, self.scopes, getattr(runtime, "object_store", None))
+        self.manual = ManualReader(
+            self.sessions, self.scopes, getattr(runtime, "object_store", None)
+        )
         # Server-owned service budget, unaffected by management policy edits or model input.
         self.policy = default_advanced_retrieval_policy().model_copy(
             update={
@@ -134,8 +141,8 @@ class ServiceKnowledge:
                     max_embedding_calls=3,
                     max_retrieval_calls=3,
                     max_query_variants=1,
-                    max_candidates_per_retriever=16,
-                    max_total_candidates=48,
+                    max_candidates_per_retriever=12 if standard else 16,
+                    max_total_candidates=24 if standard else 48,
                     result_limit=5,
                 ),
             }
@@ -166,8 +173,11 @@ class ServiceKnowledge:
     async def search(self, query: str, *, meter: MeteredModel | None = None) -> dict[str, Any]:
         if not self.runtime.model_capabilities_configured:
             raise HTTPException(503, "MODEL_CAPABILITY_NOT_CONFIGURED")
+        started = monotonic()
         meter = meter or MeteredModel(cast(RetrievalModel, self.runtime.ai))
         workflow = AdvancedRetrievalWorkflow(self.sessions, meter, self.runtime.graph)
+        settings = getattr(self.runtime, "settings", None)
+        rerank = getattr(settings, "service_rerank_enabled", False)
         result = await workflow.run(
             query,
             mode="SIMPLE",
@@ -175,6 +185,12 @@ class ServiceKnowledge:
             scopes=self.scopes,
             authz_revision=1,
             policy_override=self.policy,
+            expand_neighbors=getattr(settings, "retrieval_expand_neighbors", False),
+            fixed_plan=RetrievalPlan(
+                reasonCode="SERVICE_STANDARD_V2",
+                retrievers=(StrategySelection(id="vector"), StrategySelection(id="bm25")),
+                postRetrieval=(StrategySelection(id="rerank"),) if rerank else (),
+            ) if self.standard else None,
         )
         if result.reason_code == "RETRIEVAL_TIMEOUT":
             raise HTTPException(504, "RETRIEVAL_TIMEOUT")
@@ -212,6 +228,9 @@ class ServiceKnowledge:
             "warnings": list(result.warnings),
             "budget": self.policy.budget.model_dump(by_alias=True),
             "usage": meter.counts,
+            "retrieval_metrics": getattr(result, "metrics", {}),
+            "elapsed_ms": round((monotonic() - started) * 1000),
+            "strategy": "service-standard-v2" if self.standard else "planned",
         }
 
     async def validate(self, citations: list[Citation]) -> dict[str, Any]:
@@ -297,7 +316,10 @@ def create_app(settings: Settings | None = None, service: KnowledgeAPI | None = 
     if secret is None or len(secret.get_secret_value()) < 32:
         raise ValueError("ATLASMIND_SERVICE_JWT_SECRET must contain at least 32 characters")
     runtime = None if service is not None else create_runtime(configured)
-    knowledge = service or ServiceKnowledge(cast(Runtime, runtime), configured.service_scope_id)
+    knowledge = service or ServiceKnowledge(
+        cast(Runtime, runtime), configured.service_scope_id,
+        standard=configured.service_profile != "hq",
+    )
     slots = asyncio.Semaphore(2)
 
     @asynccontextmanager

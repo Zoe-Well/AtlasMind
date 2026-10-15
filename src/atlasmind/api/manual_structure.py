@@ -8,6 +8,9 @@ from typing import Any
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from markdown_it import MarkdownIt
 
+from atlasmind.ingestion.chunking import DeterministicChunker
+from atlasmind.ingestion.parsers import MarkdownParser, ParsingFailed
+
 ALLOWED = {
     "h1",
     "h2",
@@ -49,6 +52,23 @@ def structured_document(
     if raw is None or media_type not in {"text/markdown", "text/x-markdown"}:
         return fallback
     try:
+        # New documents use semantic blocks; legacy documents keep the exact renderer below.
+        blocks = [
+            block
+            for chunk in DeterministicChunker().canonical_chunks(MarkdownParser().parse(raw))
+            for block in chunk
+        ]
+        if [block.text for block in blocks] == paragraphs:
+            nodes = []
+            for index, block in enumerate(blocks, 1):
+                tag = (
+                    block.kind
+                    if block.kind in {"p", "pre", "li", "h1", "h2", "h3", "h4", "h5", "h6"}
+                    else "p"
+                )
+                node = {"tag": tag, "children": [{"text": block.text, "paragraph": index}]}
+                nodes.append({"tag": "ul", "children": [node]} if tag == "li" else node)
+            return {"format": "markdown", "nodes": nodes}
         soup = BeautifulSoup(MarkdownIt().render(raw.decode("utf-8")), "html.parser")
         # Ingestion uses this exact normalization. Refuse inaccurate anchors if it differs.
         parsed = [
@@ -91,7 +111,7 @@ def structured_document(
         if assigned != paragraphs:
             return fallback
         return {"format": "markdown", "nodes": nodes}
-    except (UnicodeError, ValueError, RecursionError):
+    except (UnicodeError, ValueError, RecursionError, ParsingFailed):
         return fallback
 
 

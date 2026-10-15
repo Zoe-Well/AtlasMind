@@ -2,13 +2,90 @@ param(
     [string]$YifuluRoot = 'D:\word\dianshang\yifulu-yifulu2.0.1',
     [switch]$EnableTrial,
     [switch]$EnableHqKnowledge,
-    [switch]$ReloadKnowledgeService
+    [switch]$ReloadKnowledgeService,
+    [switch]$ReloadParsingRuntime,
+    [switch]$UpdateRetrievalRuntime,
+    [switch]$BuildBackendImage,
+    [string[]]$RetrievalScopes = @('00000000-0000-4000-8000-000000000020','00000000-0000-4000-8000-000000000030')
 )
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $encoding = [Text.UTF8Encoding]::new($false)
 $atlasEnv = Join-Path $root '.env'
 $phpEnv = Join-Path $YifuluRoot '后端/.env'
+if ($BuildBackendImage -and !$UpdateRetrievalRuntime) { throw 'BuildBackendImage requires UpdateRetrievalRuntime.' }
+if ($ReloadParsingRuntime -or $UpdateRetrievalRuntime) {
+    if ($EnableHqKnowledge -or $EnableTrial -or $ReloadKnowledgeService) {
+        throw 'Reload parsing separately from enabling profiles or other reload modes.'
+    }
+    $compose = @('-p','atlasmind-local','-f','compose.yaml','-f','compose.override.yaml','-f','.data/compose.local.yaml','-f','compose.yifulu.yaml')
+    Push-Location $root
+    try {
+        $running = @(& docker compose @compose ps --status running --services)
+        if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the existing runtime.' }
+        if ('api' -notin $running -or 'ingestion-worker' -notin $running) {
+            throw 'Start the existing API and ingestion worker before using this reload mode.'
+        }
+        $targets = @('api','ingestion-worker','knowledge-service','hq-knowledge-service' | Where-Object { $_ -in $running })
+        $expectedSource = [IO.Path]::GetFullPath((Join-Path $root 'src')).TrimEnd('\','/')
+        foreach ($service in $targets) {
+            $containerId = & docker compose @compose ps -q $service
+            if ($LASTEXITCODE -ne 0 -or !$containerId) { throw "Could not inspect $service" }
+            $details = (& docker inspect $containerId | ConvertFrom-Json)[0]
+            if ($LASTEXITCODE -ne 0) { throw "Could not inspect mounts for $service" }
+            $mount = @($details.Mounts | Where-Object { $_.Destination -eq '/app/src' })
+            if ($mount.Count -ne 1 -or [IO.Path]::GetFullPath($mount[0].Source).TrimEnd('\','/') -ne $expectedSource) {
+                throw "$service does not mount the current workspace src directory."
+            }
+        }
+        $pending = & docker compose @compose exec -T postgres psql -U atlasmind -d atlasmind -At -v ON_ERROR_STOP=1 -c "SELECT (SELECT count(*) FROM ingestion_jobs WHERE state::text IN ('QUEUED','RUNNING')) + (SELECT count(*) FROM agent_runs WHERE state::text IN ('QUEUED','RUNNING'));"
+        if ($LASTEXITCODE -ne 0 -or ($pending -join '').Trim() -ne '0') {
+            throw 'Pending ingestion or answer jobs exist, or their state could not be verified. Retry when idle.'
+        }
+        if ($UpdateRetrievalRuntime) {
+            $scopeArgs = @()
+            foreach ($scope in $RetrievalScopes) {
+                $validatedScope = [guid]::Parse($scope).ToString()
+                $scopeArgs += @('--scope', $validatedScope)
+            }
+            if (!$scopeArgs.Count) { throw 'At least one explicit retrieval scope is required.' }
+            if ($BuildBackendImage) {
+                # Explicit dependency change only. All four services reuse this backend image.
+                & docker compose @compose build api
+                if ($LASTEXITCODE -ne 0) { throw 'Backend dependency image build failed; existing services retained.' }
+            }
+            $pending = & docker compose @compose exec -T postgres psql -U atlasmind -d atlasmind -At -v ON_ERROR_STOP=1 -c "SELECT (SELECT count(*) FROM ingestion_jobs WHERE state::text IN ('QUEUED','RUNNING')) + (SELECT count(*) FROM agent_runs WHERE state::text IN ('QUEUED','RUNNING'));"
+            if ($LASTEXITCODE -ne 0 -or ($pending -join '').Trim() -ne '0') {
+                throw 'New jobs arrived during preparation; retry maintenance when idle.'
+            }
+            & docker compose @compose stop --timeout 45 @targets
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stop retrieval services for maintenance.' }
+            $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+            $backupDir = Join-Path $root '.data/backups'
+            [IO.Directory]::CreateDirectory($backupDir) | Out-Null
+            $dumpPath = "/tmp/retrieval-$stamp.dump"
+            & docker compose @compose exec -T postgres pg_dump -U atlasmind -d atlasmind -Fc -f $dumpPath
+            if ($LASTEXITCODE -ne 0) { throw 'Backup failed; services remain stopped.' }
+            & docker compose @compose cp "postgres:$dumpPath" (Join-Path $backupDir "retrieval-$stamp.dump")
+            if ($LASTEXITCODE -ne 0) { throw 'Could not retain database backup.' }
+            & docker compose @compose run --rm --no-deps api alembic upgrade head
+            if ($LASTEXITCODE -ne 0) { throw 'Migration failed; services remain stopped for inspection.' }
+            & docker compose @compose run --rm --no-deps api python -m atlasmind.ingestion.reindex @scopeArgs
+            if ($LASTEXITCODE -ne 0) { throw 'Projection rebuild failed; retain backup and retry after resolving the error.' }
+            & docker compose @compose up -d --no-build --no-deps --force-recreate --wait --wait-timeout 90 @targets
+            if ($LASTEXITCODE -ne 0) { throw 'Updated retrieval services failed their health checks.' }
+        } else {
+            & docker compose @compose restart --timeout 45 @targets
+            if ($LASTEXITCODE -ne 0) { throw 'Parsing runtime restart failed.' }
+        }
+    } finally { Pop-Location }
+    if ($UpdateRetrievalRuntime) {
+        Write-Host 'Retrieval runtime updated with database backup and scoped projection rebuild. Canonical text and citations retained.'
+    } else {
+        Write-Host 'Reloaded mounted parser and manual-reader code; no image build or document reindex performed.'
+    }
+    return
+}
 function Start-KnowledgeDependencies {
     Push-Location $root
     try{

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from hashlib import sha256
 from io import BytesIO
+from time import perf_counter
 from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
@@ -30,6 +31,7 @@ from atlasmind.agent.models import AgentRunState, RunStep
 from atlasmind.agent.state import AgentState
 from atlasmind.api.middleware.auth_context import AuthContext
 from atlasmind.application.agent_run_persistence import AgentRunPersistence
+from atlasmind.application.conversations import ConversationStore
 from atlasmind.application.rag_capabilities import AgentRAGCapabilities
 from atlasmind.domain.common import (
     InvalidState,
@@ -64,9 +66,16 @@ from atlasmind.infrastructure.openai_compatible import (
     GroundedAnswer,
 )
 from atlasmind.ingestion.chunking import DeterministicChunker, IngestedChunk
+from atlasmind.ingestion.embeddings import (
+    CHUNKER_VERSION,
+    PARSER_VERSION,
+    EmbeddingBuilder,
+    model_profile,
+)
 from atlasmind.ingestion.file_validation import FileValidator
 from atlasmind.ingestion.parsers import ParserRegistry
 from atlasmind.observability.audit import AuditEvent
+from atlasmind.retrieval.lexical_pg import LEXICAL_VERSION, BasicMultilingualTokenizer
 from atlasmind.retrieval.strategy_policy import AdvancedRetrievalPolicy
 from atlasmind.tools.contracts import (
     CapabilityDescriptor,
@@ -143,8 +152,10 @@ class PersistentKnowledgeService:
         worker_id: str = "atlasmind-real-ingestion",
         missing_ai_capabilities: tuple[str, ...] = (),
         structured_datasets: tuple[StructuredDataset, ...] = (),
+        expand_neighbors: bool = False,
     ) -> None:
         self._sessions = session_factory
+        self.conversations = ConversationStore(session_factory)
         self._objects = object_store
         self._graph = graph
         self._ai = ai
@@ -160,6 +171,7 @@ class PersistentKnowledgeService:
             ai,
             graph,
             structured_datasets=structured_datasets,
+            expand_neighbors=expand_neighbors,
         )
         registry = CapabilityRegistry()
         self._register_capabilities(registry)
@@ -897,8 +909,11 @@ class PersistentKnowledgeService:
         content = await self._objects.get_bytes(str(claimed["object_key"]))
         self._validator.validate("source.bin", str(claimed["media_type"]), content)
         await self._record_stage(claimed["id"], version_id, "PARSING")
+        started = perf_counter()
         parsed = self._parsers.parse(str(claimed["media_type"]), content)
+        parse_ms = round((perf_counter() - started) * 1000)
         await self._record_stage(claimed["id"], version_id, "CHUNKING")
+        started = perf_counter()
         chunks = self._chunker.chunk(
             parsed,
             document_version_id=version_id,
@@ -906,8 +921,20 @@ class PersistentKnowledgeService:
             generation=int(claimed["generation"]),
         )
         await self._record_stage(claimed["id"], version_id, "LEXICAL_INDEX")
+        chunk_ms = round((perf_counter() - started) * 1000)
+        tokenizer = BasicMultilingualTokenizer()
+        lexical_texts = [tokenizer.document(chunk.content) for chunk in chunks]
         await self._record_stage(claimed["id"], version_id, "VECTOR_INDEX")
-        embeddings = await self._ai.embed([chunk.content for chunk in chunks])
+        embeddings, build_metrics = await EmbeddingBuilder(self._sessions, self._ai).build(
+            [chunk.content for chunk in chunks], scope_ids
+        )
+        build_profile = {
+            "parser": PARSER_VERSION, "chunker": CHUNKER_VERSION, "lexical": LEXICAL_VERSION,
+            "embedding_profile": model_profile(self._ai),
+            "embedding": getattr(self._ai, "embedding_descriptor", {}),
+            "dimension": len(embeddings[0]) if embeddings else 0,
+            "metrics": {"parse_ms": parse_ms, "chunk_ms": chunk_ms, **build_metrics},
+        }
         graph_policy = await self.get_graph_policy()
         await self._record_stage(claimed["id"], version_id, "GRAPH_INDEX")
         extractions: list[GraphExtraction] = []
@@ -968,21 +995,26 @@ class PersistentKnowledgeService:
                 and document["active_generation"] > claimed["generation"]
             ):
                 raise InvalidState(details={"reason": "DOCUMENT_REVOKED_OR_SUPERSEDED"})
-            for chunk, embedding in zip(chunks, embeddings, strict=True):
+            for chunk, embedding, lexical_text in zip(chunks, embeddings, lexical_texts, strict=True):
                 await session.execute(
                     text(
                         """
                         INSERT INTO knowledge_chunks
                             (id, document_version_id, ordinal, content, locator, scope_ids,
-                             generation, active, embedding, search_vector)
+                             generation, active, embedding, search_vector,
+                             embedding_profile, lexical_version, section_key)
                         VALUES (:id, :version_id, :ordinal, :content, :locator, :scopes,
                                 :generation, true, CAST(:embedding AS vector),
-                                to_tsvector('simple', :content))
+                                to_tsvector('simple', :lexical_text),
+                                :embedding_profile, :lexical_version, :section_key)
                         ON CONFLICT (document_version_id, ordinal)
                         DO UPDATE SET content = EXCLUDED.content, locator = EXCLUDED.locator,
                                       scope_ids = EXCLUDED.scope_ids,
                                       embedding = EXCLUDED.embedding,
                                       search_vector = EXCLUDED.search_vector,
+                                      embedding_profile = EXCLUDED.embedding_profile,
+                                      lexical_version = EXCLUDED.lexical_version,
+                                      section_key = EXCLUDED.section_key,
                                       active = true
                         """
                     ),
@@ -995,6 +1027,10 @@ class PersistentKnowledgeService:
                         "scopes": [UUID(value) for value in sorted(chunk.scope_ids)],
                         "generation": chunk.generation,
                         "embedding": self._vector_literal(embedding),
+                        "lexical_text": lexical_text,
+                        "embedding_profile": model_profile(self._ai),
+                        "lexical_version": LEXICAL_VERSION,
+                        "section_key": chunk.section_key,
                     },
                 )
             for chunk, extraction in zip(chunks, extractions, strict=True):
@@ -1018,11 +1054,12 @@ class PersistentKnowledgeService:
                 text(
                     """
                     UPDATE document_versions
-                       SET searchable = true, lifecycle_state = 'SEARCHABLE'
+                       SET searchable = true, lifecycle_state = 'SEARCHABLE',
+                           build_profile = CAST(:build_profile AS jsonb)
                      WHERE id = :version_id
                     """
                 ),
-                {"version_id": UUID(version_id)},
+                {"version_id": UUID(version_id), "build_profile": json.dumps(build_profile)},
             )
             old_version = (
                 await session.execute(
@@ -1445,6 +1482,7 @@ class PersistentKnowledgeService:
         mode: AgentMode,
         context: AuthContext,
         trace_id: str | None = None,
+        conversation_id: str | None = None,
         _on_created: Callable[[dict[str, object]], Awaitable[None]] | None = None,
     ) -> dict[str, object]:
         self._require_ai_capabilities()
@@ -1456,16 +1494,22 @@ class PersistentKnowledgeService:
         budgets = AgentBudgets(max_steps=12, max_tools=4, timeout_ms=60_000)
         query_digest = f"sha256:{sha256(query.encode()).hexdigest()}"
         async with self._sessions() as session, session.begin():
+            conversation_uuid, turn_index = await self.conversations.accept_turn(
+                session, conversation_id=conversation_id, principal_id=context.principal_id,
+                query=query, now=now,
+            )
             await session.execute(
                 text(
                     """
                     INSERT INTO agent_runs
                         (id, principal_id, correlation_id, trace_id, query_digest, scope_ids,
-                         authz_revision, state, created_at, task_type, budgets, usage)
+                         authz_revision, state, created_at, task_type, budgets, usage,
+                         conversation_id, turn_index, query_text)
                     VALUES
                         (:id, :principal, :correlation, :trace_id, :digest, :scopes,
                          :revision, 'RUNNING', :now, 'SIMPLE',
-                         CAST(:budgets AS jsonb), CAST('{}' AS jsonb))
+                         CAST(:budgets AS jsonb), CAST('{}' AS jsonb),
+                         :conversation_id, :turn_index, :query_text)
                     """
                 ),
                 {
@@ -1474,6 +1518,9 @@ class PersistentKnowledgeService:
                     "correlation": UUID(context.correlation_id),
                     "trace_id": trace_id,
                     "digest": query_digest,
+                    "conversation_id": conversation_uuid,
+                    "turn_index": turn_index,
+                    "query_text": query,
                     "scopes": [UUID(value) for value in sorted(context.scope_ids)],
                     "revision": context.authz_revision,
                     "now": now,
@@ -1551,6 +1598,8 @@ class PersistentKnowledgeService:
                 trace_id=trace_id,
                 created_at=now,
             )
+            completed.update({"conversationId": str(conversation_uuid),
+                              "turnIndex": turn_index, "query": query})
             answer = completed.get("answer")
             if isinstance(answer, dict):
                 citations = answer.get("citations")
@@ -1637,6 +1686,7 @@ class PersistentKnowledgeService:
         mode: AgentMode,
         context: AuthContext,
         trace_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> dict[str, object]:
         """Return an accepted run while the bounded graph continues in-process."""
         ready: asyncio.Future[dict[str, object]] = asyncio.get_running_loop().create_future()
@@ -1652,6 +1702,7 @@ class PersistentKnowledgeService:
                     mode=mode,
                     context=context,
                     trace_id=trace_id,
+                    conversation_id=conversation_id,
                     _on_created=created,
                 )
             except asyncio.CancelledError:
@@ -2865,7 +2916,8 @@ class PersistentKnowledgeService:
                     await session.execute(
                         text(
                             """
-                    SELECT id, correlation_id, trace_id, state, task_type, answer, evidence_status,
+                    SELECT id, conversation_id, turn_index, query_text,
+                           correlation_id, trace_id, state, task_type, answer, evidence_status,
                            usage, created_at, finished_at, degradation_reason
                           FROM agent_runs
                          WHERE id = :id AND principal_id = :principal
@@ -2980,6 +3032,9 @@ class PersistentKnowledgeService:
         }
         return {
             "id": str(run["id"]),
+            "conversationId": str(run["conversation_id"]) if run["conversation_id"] else None,
+            "turnIndex": run["turn_index"],
+            "query": run["query_text"],
             "correlationId": str(run["correlation_id"]),
             "traceId": run["trace_id"],
             "state": run["state"],

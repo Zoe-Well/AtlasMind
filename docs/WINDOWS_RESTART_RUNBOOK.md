@@ -1,6 +1,49 @@
 # AtlasMind Windows 重启恢复手册
 
-最后更新：2026-10-12。
+最后更新：2026-10-15。
+
+## 2026-10-15：检索构建迁移与对照
+
+```powershell
+pwsh -NoProfile -File scripts/Test-YifuluMvp.ps1 -Retrieval
+# 仅0017/Jieba首次落地，或确有后端依赖变化时加BuildBackendImage
+pwsh -NoProfile -File scripts/Start-YifuluMvp.ps1 -UpdateRetrievalRuntime -BuildBackendImage
+```
+
+更新入口核对当前工作区挂载、无排队/执行中的入库及问答；停止4个已运行后端服务后备份PostgreSQL至`.data/backups/`，迁移并按scope重算投影，再以`--no-build`重建容器及检查健康。默认范围为本机scope020/030，可用`-RetrievalScopes <UUID[]>`显式指定。只重算向量和分词索引，不改变正文/块ID/定位/引用，不自动重新解析；外部Embedding服务必须可用。途中失败保留备份与已完成版本，服务保持停止，排障后用相同参数不带Build重试，复用已完成批次；不要改迁移版本号伪装成功。更新期间勿发起新任务。
+
+日常源码更新仍使用`-ReloadParsingRuntime`重载相关常驻进程，不重建镜像、不重算文档。模型endpoint/model/revision变更需重新执行投影更新；同名模型换权重必须递增`ATLASMIND_EMBEDDING_REVISION`（默认1）。未知模型身份的旧向量不会被新生产模型混用。
+
+客服默认固定向量+关键词+RRF，`ATLASMIND_SERVICE_RERANK_ENABLED=true`仅恢复客服重排，不改变HQ/企业规划。`ATLASMIND_RETRIEVAL_EXPAND_NEIGHBORS`默认false，开启前需有真实新解析章节语料的质量验收。配置改动需重建相应容器以刷新环境变量，无需构建镜像。查询向量缓存为各进程60秒/128条，重启即清空；持久构建缓存保存在PostgreSQL，按模型和scope隔离。
+
+只读真实模型对照复用`tests/evaluation/retrieval_comparison.py`和既有15问，另有15条详细规则问法；在配置好的后端环境挂载仓库至`/workspace`，以工作目录`/workspace`执行`python -m tests.evaluation.retrieval_comparison --report .data/retrieval-comparison.json`。只查询当前知识与调用Embedding/重排模型，无业务写入；报告含当前知识版本、标题命中、耗时、用量、降级与缓存命中。它不生成最终客服答案，也不代替人工语义验收或容量压测。
+
+## 2026-10-15：文档解析回归与常驻源码重载
+
+在 AtlasMind 根目录运行：
+
+```powershell
+pwsh -NoProfile -File scripts/Test-YifuluMvp.ps1 -Parsing
+pwsh -NoProfile -File scripts/Start-YifuluMvp.ps1 -ReloadParsingRuntime
+```
+
+`-Parsing` 复用既有测试入口，在临时 PostgreSQL 数据库迁移和运行解析、入库、手册引用及知识权限回归，结束后删除临时数据库，不领取用户的导入任务。
+
+`-ReloadParsingRuntime` 只重启当前已运行的 API、ingestion-worker、knowledge-service 及 hq-knowledge-service，保留现有容器、挂载、依赖、数据卷及功能开关，不构建镜像。运行前检查 `/app/src` 指向本工作区，且入库和问答均无 QUEUED/RUNNING 任务；检查失败即停止，待空闲后重试。更新期间不要新发起上传或问答；重启后应确认服务健康。该参数不能和 Enable/其他 Reload 参数混用，不负责启用未运行的服务。
+
+普通解析代码更新需同时重载入库进程和提供手册正文的知识监听器。已有文档仍按旧版本读取；在原文档详情“上传新版本”可用同一原文件重新解析，成功激活后才替换旧版本，不通过清空索引强制升级。该流程不保证任意复杂版面解析准确，UI 和真实资料的答案/引用质量仍由用户验收。
+
+## 2026-10-13：对话记录迁移与开发容器
+
+对话记录依赖迁移 `0016`。本机 14 条旧记录已迁移，原问题缺失时仅保留回答；迁移前完整数据库备份位于 Git 忽略的 `.data/conversation-validation/before-conversations.dump`。新问题与会话会持久保存。部署前先备份并确认没有在途问答。
+
+API 启动命令会执行 `alembic upgrade head`，开发 Compose 现同时只读挂载 `src` 和 `migrations`。新增迁移后仅挂载源码不足以启动：若日志出现 `Can't locate revision identified by '0016'`，检查迁移目录是否挂载到 `/app/migrations`，不要回写版本号或回退数据库伪装成功。已有开发容器首次应用该挂载需用完整配置重新创建 API：
+
+```powershell
+docker compose -p atlasmind-local -f compose.yaml -f compose.override.yaml -f .data/compose.local.yaml -f compose.yifulu.yaml up -d --no-build --no-deps api
+```
+
+正式镜像部署仍需构建包含新迁移与源码的镜像。本机已验证重新创建后会话详情返回两轮 COMPLETED，未登录列表返回 401。若 Next 开发类型检查出现自动生成的 `frontend/.next/dev/types/routes.d.ts` 尾部重复内容，确认是生成文件后删除该文件并重启前端重新生成，再执行类型检查，不修改源码类型或排除类型检查。本次该现象已恢复并重新通过 TypeScript 检查。
 
 ## 2026-10-12：客服来源恢复与定向重载
 

@@ -111,6 +111,8 @@ authz/policy revision 与 correlation ID；它不由公共请求体提供，也�
 
 DocumentVersion 与 KnowledgeScope 为多对多关系，每项关联记录来源、授予者和策略修订号。
 
+迁移0017增加可更新的`build_profile JSONB`，记录可重建投影的parser/chunker/lexical版本、模型身份/维度和构建指标；不改变原始内容版本的不可变约束。只重算旧投影时保留原文与引用，未知解析版本明确记为`legacy-unknown`。
+
 ### DocumentMetadata
 
 经 schema 管理的业务元数据值。
@@ -142,6 +144,10 @@ DocumentVersion 与 KnowledgeScope 为多对多关系，每项关联记录来源
 | `status` | ACTIVE、REVOKED | 非 ACTIVE 不进入候选 |
 
 Chunk 继承版本的全部 KnowledgeScope，不允许投影扩大范围。
+
+迁移0017为`knowledge_chunks`增加可空`embedding_profile`、`lexical_version`和`section_key`。生产向量检索同时匹配模型身份及维度；空身份旧块须重算。`section_key`来自新解析器章节/来源，不推断旧块章节。活动块`search_vector`有GIN索引；Jieba分词文本用于索引，引用仍绑定规范正文。
+
+`knowledge_embedding_cache`以`(profile,scope_key,content_digest)`为复合主键，保存dimension、embedding和created_at；scope_key是完整实际scope集合的摘要，不用请求者更大的授权范围代替。仅复用完全相同输入的模型向量，不保存正文、不输出为证据、不绕过文档生命周期；当前无自动淘汰。查询向量另用有界进程内缓存，每次检索仍查询活动/授权状态。
 
 ### Projection
 
@@ -251,6 +257,19 @@ GraphRelation 与一个或多个 Chunk 的来源关联；每条可披露路径�
 | `side_effect` | 是否改变外部状态 | HIGH 时必须审批 |
 | `timeout_ms` / `max_result_bytes` | 执行预算 | 正数且有全局上限 |
 | `status` | ACTIVE、DISABLED、RETIRED | 非 ACTIVE 不可调用 |
+
+### Conversation（2026-10-13 已实现增量）
+
+`conversations` 保存 `id`、可信 `principal_id`、首问派生标题、`created_at` 和 `updated_at`。
+`agent_runs` 增量保存 `conversation_id`、`turn_index` 与 `query_text`；用户消息来自 `query_text`，
+助手消息继续读取原 `answer` 和 Citation，运行失败/取消也保留所属轮次。问题是数据库中的受控文本，
+不能宣称已经加密；保留/删除仍需遵循企业数据政策。
+
+- 创建运行与分配会话/轮次在同一事务完成；行锁保证同一会话只有一轮在途，轮次组合唯一。
+- `(conversation_id, principal_id)` 外键与所有读写路径的身份检查共同约束归属。
+- `0016` 将每条旧运行独立映射到同 ID 会话，`query_text=NULL` 明确表示缺失，不重建原文或推测旧轮次。
+- 详情返回最新一页并按轮次正序展示，以 `before` 轮次游标读取更早记录；会话列表支持 `limit/offset`。
+- `conversationId` 仅用于记录归属；本次不把保存的历史消息自动送入 Agent Context。
 
 ### AgentRun
 

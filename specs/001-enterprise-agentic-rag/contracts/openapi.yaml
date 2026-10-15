@@ -29,6 +29,51 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RuntimeCapabilities' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
+  /v1/conversations:
+    get:
+      tags: [Agent Runs]
+      operationId: listConversations
+      summary: List conversations owned by the authenticated principal
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Conversations ordered by most recent submitted turn
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /v1/conversations/{conversationId}:
+    get:
+      tags: [Agent Runs]
+      operationId: readConversation
+      summary: Read persisted question and answer turns owned by the current principal
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: before
+          in: query
+          description: Read turns before this ordinal; omitted returns the latest page.
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Latest page in chronological order, with cursor for earlier turns
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/ResourceNotAvailable' }
+
   /v1/agent-runs:
     get:
       tags: [Agent Runs]
@@ -72,6 +117,10 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/ResourceNotAvailable'
+        '409':
+          $ref: '#/components/responses/InvalidState'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -851,6 +900,7 @@ components:
         conversationId:
           type: [string, 'null']
           format: uuid
+          description: Append to an owned conversation; omitted starts a new one. Returns 409 if another turn is active.
         responseLanguage:
           type: [string, 'null']
           maxLength: 20
@@ -863,6 +913,31 @@ components:
               maxLength: 20
       description: Roles, subject, and knowledge scopes are intentionally absent
 
+    Conversation:
+      type: object
+      required: [id, title, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string, maxLength: 120 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ConversationList:
+      type: object
+      required: [items, nextOffset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Conversation' }
+        nextOffset: { type: [integer, 'null'], minimum: 0 }
+    ConversationDetail:
+      type: object
+      required: [conversation, items, nextBefore]
+      properties:
+        conversation: { $ref: '#/components/schemas/Conversation' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AgentRun' }
+        nextBefore: { type: [integer, 'null'], minimum: 1 }
     AgentRun:
       type: object
       required: [id, correlationId, state, createdAt, links]
@@ -870,6 +945,15 @@ components:
         id:
           type: string
           format: uuid
+        conversationId:
+          type: [string, 'null']
+          format: uuid
+        turnIndex:
+          type: [integer, 'null']
+          minimum: 1
+        query:
+          type: [string, 'null']
+          description: Original user message; null for legacy records whose question was not saved.
         correlationId:
           type: string
           format: uuid

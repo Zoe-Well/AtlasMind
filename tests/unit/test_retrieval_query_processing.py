@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from typing import Any, cast
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from atlasmind.infrastructure.ai_ports import RankedText
 from atlasmind.retrieval.advanced_workflow import (
+    AdvancedRetrievalWorkflow,
     HyDEStrategy,
     MultiQueryStrategy,
     ProcessedQuery,
@@ -17,10 +21,26 @@ from atlasmind.retrieval.advanced_workflow import (
     build_strategy_registry,
 )
 from atlasmind.retrieval.strategy_policy import (
+    RetrievalPlan,
     StrategyConfiguration,
     StrategySelection,
     default_advanced_retrieval_policy,
 )
+
+
+@pytest.mark.asyncio
+async def test_fixed_service_plan_does_not_call_model_planner() -> None:
+    model = ScriptedRetrievalModel([])
+    current = replace(context(model), fixed_plan=RetrievalPlan(
+        reasonCode="SERVICE_STANDARD_V1",
+        retrievers=(StrategySelection(id="vector"), StrategySelection(id="bm25")),
+        postRetrieval=(StrategySelection(id="rerank"),),
+    ))
+    workflow = object.__new__(AdvancedRetrievalWorkflow)
+    workflow._publish_activity = AsyncMock()
+    result = await workflow._plan({}, SimpleNamespace(context=current))
+    assert result['draft_plan'] == current.fixed_plan
+    assert model.prompts == []
 
 
 class ScriptedRetrievalModel:

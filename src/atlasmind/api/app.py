@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Annotated
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, File, Form, Header, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -37,6 +37,7 @@ class CreateRun(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, max_length=16_000)
     mode: AgentMode = "AUTO"
+    conversationId: UUID | None = None
 
 
 class UpdateGraphPolicy(BaseModel):
@@ -307,10 +308,33 @@ def create_app(
                 mode=body.mode,
                 context=context,
                 trace_id=trace_id,
+                conversation_id=str(body.conversationId) if body.conversationId else None,
             )
             span.set_attribute("atlasmind.run_id", str(result["id"]))
             span.set_attribute("atlasmind.outcome", str(result["state"]))
             return result
+
+    @api.get("/v1/conversations")
+    async def list_conversations(
+        context: AuthContextDependency,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.conversations.list(
+            context.principal_id, limit=limit, offset=offset,
+        )
+
+    @api.get("/v1/conversations/{conversation_id}")
+    async def read_conversation(
+        conversation_id: UUID,
+        context: AuthContextDependency,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        before: Annotated[int | None, Query(ge=1)] = None,
+    ) -> dict[str, object]:
+        return await dependencies.knowledge.conversations.read(
+            str(conversation_id), context.principal_id,
+            read_run=dependencies.knowledge.get_run, limit=limit, before=before,
+        )
 
     @api.get("/v1/agent-runs")
     async def list_runs(
